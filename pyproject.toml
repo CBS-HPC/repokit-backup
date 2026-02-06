@@ -1,5 +1,8 @@
 [build-system]
-requires = ["setuptools>=65", "wheel"]
+requires = [
+    "setuptools>=65",
+    "wheel",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,35 +10,43 @@ name = "repokit-backup"
 version = "0.1"
 description = "Backup and sync CLI for Repokit"
 readme = "README.md"
-license = {file = "LICENSE"}
-authors = [{name = "CBS-HPC"}]
-keywords = ["research", "reproducibility", "automation", "data-management"]
+authors = [
+    { name = "CBS-HPC" },
+]
+keywords = [
+    "research",
+    "reproducibility",
+    "automation",
+    "data-management",
+]
 classifiers = [
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.12",
-  "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
 ]
-
 dependencies = [
-  "requests",
-  "repokit-common",
+    "requests",
+    "repokit-common",
 ]
-
 requires-python = ">=3.12"
+
+[project.license]
+file = "LICENSE"
 
 [project.urls]
 Homepage = "https://github.com/CBS-HPC/repokit-backup"
 Repository = "https://github.com/CBS-HPC/repokit-backup"
 Issues = "https://github.com/CBS-HPC/repokit-backup/issues"
 
-
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "ruff>=0.6",
-  "uv",
+    "pytest",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "uv",
 ]
+
 [project.scripts]
 backup = "repokit_backup.cli:main"
 repokit-backup = "repokit_backup.cli:main"
@@ -45,4 +56,19 @@ line-length = 100
 target-version = "py312"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = [
+    "src",
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+no_implicit_optional = false
+strict_optional = false
+exclude = "(^\\.venv/|^build/|^dist/)"
+
+[tool.datasets]
+patterns = "C:\\data\\*"

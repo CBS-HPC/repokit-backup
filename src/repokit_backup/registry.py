@@ -19,7 +19,9 @@ def _atomic_write_json(path: str, data: dict):
     tmp.replace(path)
 
 
-def load_registry(remote_name: str, json_path: str = "./bin/rclone_remote.json") -> tuple[str | None, str | None]:
+def load_registry(
+    remote_name: str, json_path: str = "./bin/rclone_remote.json"
+) -> tuple[str | None, str | None]:
     """
     Load rclone remote mapping.
 
@@ -52,7 +54,7 @@ def save_registry(
     folder_path: str,
     local_backup_path: str,
     remote_type: str,
-    json_path: str = "./bin/rclone_remote.json"
+    json_path: str = "./bin/rclone_remote.json",
 ):
     """Save remote configuration to registry."""
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
@@ -95,7 +97,7 @@ def update_sync_status(
     action: str,
     operation: str,
     success: bool = True,
-    json_path: str = "./bin/rclone_remote.json"
+    json_path: str = "./bin/rclone_remote.json",
 ):
     """Update last sync status for a remote."""
     if not os.path.exists(json_path):

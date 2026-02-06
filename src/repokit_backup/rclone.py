@@ -24,7 +24,7 @@ from .registry import update_sync_status, load_registry, load_all_registry
 
 DEFAULT_TIMEOUT = 600  # seconds
 
-DEFAULT_DATASET_PATH, _= toml_dataset_path()
+DEFAULT_DATASET_PATH, _ = toml_dataset_path()
 
 
 def _rc_verbose_args(level: int) -> list[str]:
@@ -96,7 +96,6 @@ def install_rclone(install_path: str = "./bin") -> bool:
     return True
 
 
-
 def _rclone_transfer(
     remote_name: str,
     local_path: str,
@@ -146,8 +145,8 @@ def _rclone_transfer(
     command = ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + exclude_args
 
     # Use ucloud config if applicable
-    #if remote_path.startswith("ucloud:") or :
-    if remote_name.lower().startswith("ucloud"):    
+    # if remote_path.startswith("ucloud:") or :
+    if remote_name.lower().startswith("ucloud"):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
             command += ["--config", str(rclone_conf)]
@@ -160,11 +159,9 @@ def _rclone_transfer(
 
     try:
         subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
-        verb = {
-            "sync": "synchronized",
-            "copy": "copied",
-            "move": "moved (deleted at origin)"
-        }.get(operation, operation)
+        verb = {"sync": "synchronized", "copy": "copied", "move": "moved (deleted at origin)"}.get(
+            operation, operation
+        )
         print(f"Folder '{local_path}' successfully {verb} to '{remote_path}'.")
         update_sync_status(remote_name, action=action, operation=operation, success=True)
     except subprocess.CalledProcessError as e:
@@ -194,7 +191,7 @@ def push_rclone(
     new_path: str = None,
     operation: str = "sync",
     dry_run: bool = False,
-    verbose: int = 0
+    verbose: int = 0,
 ):
     """Push local files to remote."""
     os.chdir(PROJECT_ROOT)
@@ -211,14 +208,18 @@ def push_rclone(
     for remote_name in all_remotes:
         _remote_path, _local_path = load_registry(remote_name.lower())
         if not _remote_path:
-            print(f"Remote has not been configured or not found in registry. "
-                  f"Run 'backup add --remote {remote_name}' first.")
+            print(
+                f"Remote has not been configured or not found in registry. "
+                f"Run 'backup add --remote {remote_name}' first."
+            )
             continue
 
         if new_path is None:
             new_path = _remote_path
         if rclone_commit:
-            flag = rclone_commit(_local_path, flag, msg=f"Rclone Push from {_local_path} to {new_path}")
+            flag = rclone_commit(
+                _local_path, flag, msg=f"Rclone Push from {_local_path} to {new_path}"
+            )
         exclude_patterns = _exclude_patterns(_local_path)
 
         _rclone_transfer(
@@ -229,7 +230,7 @@ def push_rclone(
             operation=operation,
             exclude_patterns=exclude_patterns,
             dry_run=dry_run,
-            verbose=verbose
+            verbose=verbose,
         )
 
 
@@ -238,7 +239,7 @@ def pull_rclone(
     new_path: str = None,
     operation: str = "sync",
     dry_run: bool = False,
-    verbose: int = 0
+    verbose: int = 0,
 ):
     """Pull files from remote to local."""
     if remote_name is None:
@@ -256,8 +257,10 @@ def pull_rclone(
     _remote_path, _local_path = load_registry(remote_name.lower())
 
     if not _remote_path:
-        print(f"Remote has not been configured or not found in registry. "
-              f"Run 'backup add --remote {remote_name}' first.")
+        print(
+            f"Remote has not been configured or not found in registry. "
+            f"Run 'backup add --remote {remote_name}' first."
+        )
         return
 
     if new_path is None:
@@ -277,7 +280,7 @@ def pull_rclone(
         operation=operation,
         exclude_patterns=exclude_patterns,
         dry_run=dry_run,
-        verbose=verbose
+        verbose=verbose,
     )
 
 
@@ -295,7 +298,7 @@ def rclone_diff_report(local_path: str, remote_path: str):
             print("⚠️ ucloud rclone config not found in ./bin. Cannot run diff.")
             return
         # Strip "ucloud:" prefix and make path absolute
-        remote_path = "/" + remote_path[len("ucloud:"):].lstrip("/")
+        remote_path = "/" + remote_path[len("ucloud:") :].lstrip("/")
         cmd += ["--config", str(rclone_conf)]
 
     cmd += [
@@ -322,6 +325,7 @@ def rclone_diff_report(local_path: str, remote_path: str):
 def rclone_diff_report_old(local_path: str, remote_path: str):
     """Quick diff between local folder and remote path."""
     import tempfile
+
     with tempfile.NamedTemporaryFile() as temp:
         command = [
             "rclone",
@@ -380,7 +384,9 @@ def transfer_between_remotes(
     dst_meta = all_remotes.get(dest_remote)
 
     if not src_meta or not dst_meta:
-        print(f"Error: One or both remotes not registered. Source: {source_remote}, Destination: {dest_remote}")
+        print(
+            f"Error: One or both remotes not registered. Source: {source_remote}, Destination: {dest_remote}"
+        )
         return
 
     src_local = src_meta.get("local_path")

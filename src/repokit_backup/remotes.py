@@ -11,47 +11,60 @@ import sys
 
 from repokit_common import PROJECT_ROOT, load_from_env, save_to_env, check_path_format
 from .registry import save_registry, load_all_registry, delete_from_registry, load_registry
-from .rclone import _rc_verbose_args, rclone_diff_report, _rclone_transfer, DEFAULT_TIMEOUT, install_rclone
+from .rclone import (
+    _rc_verbose_args,
+    rclone_diff_report,
+    _rclone_transfer,
+    DEFAULT_TIMEOUT,
+    install_rclone,
+)
 
 
 def _detect_remote_type(remote_name: str) -> str:
     """
     Detect the remote type based on the remote name prefix.
-    
+
     Args:
         remote_name: The full remote name (e.g., 'dropbox-dataset1', 'onedrive-work')
-    
+
     Returns:
         The remote type (e.g., 'dropbox', 'onedrive', 'erda')
     """
     remote_lower = remote_name.lower()
-    
+
     known_types = [
-        'dropbox', 'onedrive', 'googledrive', 'gdrive',
-        'erda', 'ucloud', 
-        'lumi', 'local', 's3', 'sftp'
+        "dropbox",
+        "onedrive",
+        "googledrive",
+        "gdrive",
+        "erda",
+        "ucloud",
+        "lumi",
+        "local",
+        "s3",
+        "sftp",
     ]
-    
+
     for remote_type in known_types:
         if remote_lower.startswith(remote_type):
-            if remote_type in ['googledrive', 'gdrive']:
-                return 'drive'
+            if remote_type in ["googledrive", "gdrive"]:
+                return "drive"
             return remote_type
-    
-    return 'sftp'
+
+    return "sftp"
 
 
 def _get_base_remote_type(remote_name: str) -> str:
     """Get the base remote type for rclone config."""
     remote_type = _detect_remote_type(remote_name)
-    
+
     type_mapping = {
-        'erda': 'sftp',
-        'ucloud': 'sftp',
-        'googledrive': 'drive',
-        'gdrive': 'drive',
+        "erda": "sftp",
+        "ucloud": "sftp",
+        "googledrive": "drive",
+        "gdrive": "drive",
     }
-    
+
     return type_mapping.get(remote_type, remote_type)
 
 
@@ -91,13 +104,13 @@ def _detect_default_ssh_key() -> str:
 def _ensure_repo_suffix(folder: str, repo: str) -> str:
     """Ensure folder path ends with repo name and is not inside PROJECT_ROOT."""
     folder = folder.strip().replace("\\", "/").rstrip("/")
-    
+
     if not folder.endswith(repo):
         folder = os.path.join(folder, repo).replace("\\", "/")
-    
+
     project_root_normalized = os.path.normpath(str(PROJECT_ROOT))
     folder_normalized = os.path.normpath(folder)
-    
+
     if folder_normalized.startswith(project_root_normalized):
         folder = project_root_normalized + "_backup"
 
@@ -107,7 +120,7 @@ def _ensure_repo_suffix(folder: str, repo: str) -> str:
 def set_host_port(remote_name: str):
     """Set host and port for SFTP-based remotes, and create/update ucloud rclone config."""
     remote_type = _detect_remote_type(remote_name)
-    
+
     if remote_type not in ["erda", "ucloud"]:
         return  # Only needed for SFTP remotes
 
@@ -130,7 +143,9 @@ def set_host_port(remote_name: str):
 
         # SSH key
         default_key = _detect_default_ssh_key()
-        ssh_key_path = _prompt_with_default("Path to SSH private key for ucloud", default_key).strip()
+        ssh_key_path = _prompt_with_default(
+            "Path to SSH private key for ucloud", default_key
+        ).strip()
         ssh_key_path = str(pathlib.Path(ssh_key_path).expanduser())
 
         if not os.path.isfile(ssh_key_path):
@@ -162,7 +177,7 @@ key_file = {ssh_key_path}
 
 def setup_ssh_agent_and_add_key(ssh_path: str):
     """Start/ensure an SSH agent and add the provided key."""
-    
+
     def _parse_ssh_agent_exports(output: str) -> dict:
         env = {}
         for line in output.splitlines():
@@ -176,12 +191,22 @@ def setup_ssh_agent_and_add_key(ssh_path: str):
         if sys.platform.startswith("win"):
             sc = shutil.which("sc")
             if sc is None:
-                raise RuntimeError("Windows 'sc' utility not found; cannot control ssh-agent service.")
+                raise RuntimeError(
+                    "Windows 'sc' utility not found; cannot control ssh-agent service."
+                )
             try:
-                subprocess.run([sc, "config", "ssh-agent", "start=", "auto"],
-                            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run([sc, "start", "ssh-agent"],
-                            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    [sc, "config", "ssh-agent", "start=", "auto"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                subprocess.run(
+                    [sc, "start", "ssh-agent"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to start Windows ssh-agent service: {e}") from e
         else:
@@ -189,13 +214,18 @@ def setup_ssh_agent_and_add_key(ssh_path: str):
                 ssh_agent = shutil.which("ssh-agent")
                 if not ssh_agent:
                     raise RuntimeError("ssh-agent not found in PATH.")
-                proc = subprocess.run([ssh_agent, "-s"], check=True, capture_output=True, 
-                                    text=True, timeout=DEFAULT_TIMEOUT)
+                proc = subprocess.run(
+                    [ssh_agent, "-s"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=DEFAULT_TIMEOUT,
+                )
                 env = _parse_ssh_agent_exports(proc.stdout)
                 if not env:
                     raise RuntimeError("Failed to parse ssh-agent output.")
                 os.environ.update(env)
-    
+
     key = pathlib.Path(ssh_path).expanduser()
     if not key.is_file():
         raise FileNotFoundError(f"SSH key not found: {key}")
@@ -221,39 +251,39 @@ def _handle_lumi_o_remote(remote_name: str) -> tuple[str, str, str, str]:
     access_key = load_from_env("LUMI_ACCESS_KEY")
     secret_key = load_from_env("LUMI_SECRET_KEY")
     base_folder = load_from_env(f"LUMI_BASE_{remote_type.upper()}")
-    
+
     if project_id and access_key and secret_key and base_folder:
         base_folder = _ensure_repo_suffix(base_folder, repo_name)
         remote_name = _lumi_o_remote_name(remote_name)
         return remote_name, base_folder, access_key, secret_key
-    
+
     default_base = f"rclone-backup/{repo_name}"
     base_folder = (
-        input(f"Enter base folder for LUMI-O ({remote_type}) [{default_base}]: ").strip() 
+        input(f"Enter base folder for LUMI-O ({remote_type}) [{default_base}]: ").strip()
         or default_base
     )
     base_folder = _ensure_repo_suffix(base_folder, repo_name)
-    
+
     print("\nGet your LUMI-O credentials from: https://auth.lumidata.eu")
-    
+
     project_id = access_key = secret_key = None
     while not project_id or not access_key or not secret_key:
         project_id = input("Please enter LUMI project ID (e.g., 465000001): ").strip()
         access_key = input("Please enter LUMI access key: ").strip()
         secret_key = getpass.getpass("Please enter LUMI secret key: ").strip()
-        
+
         if not project_id or not access_key or not secret_key:
             print("All three fields (project ID, access key, secret key) are required.\n")
-    
+
     print(f"\nUsing project ID: {project_id}")
     print(f"Using base folder: {base_folder}")
     print(f"Remote type: {remote_type}\n")
-    
+
     save_to_env(project_id, "LUMI_PROJECT_ID")
     save_to_env(access_key, "LUMI_ACCESS_KEY")
     save_to_env(secret_key, "LUMI_SECRET_KEY")
     save_to_env(base_folder, f"LUMI_BASE_{remote_type.upper()}")
-    
+
     remote_name = _lumi_o_remote_name(remote_name)
     return remote_name, base_folder, access_key, secret_key
 
@@ -273,15 +303,19 @@ def check_lumi_o_credentials(remote_name: str, command: str = "add") -> str | No
         remote_name, _, _, _ = _handle_lumi_o_remote(remote_name)
         return remote_name
     elif not project_id and command != "add":
-        print(f"{remote_name} remote not found. Please set up the remote first by "
-              f"running 'backup add --remote {remote_name}'.")
+        print(
+            f"{remote_name} remote not found. Please set up the remote first by "
+            f"running 'backup add --remote {remote_name}'."
+        )
         return None
     elif project_id:
         return _lumi_o_remote_name(remote_name)
     return None
 
 
-def _remote_user_info(remote_name: str, local_backup_path: str) -> tuple[str, str | None, str | None, str]:
+def _remote_user_info(
+    remote_name: str, local_backup_path: str
+) -> tuple[str, str | None, str | None, str]:
     """Get remote user information based on type."""
     repo_name = pathlib.Path(local_backup_path).name
     remote_type = _detect_remote_type(remote_name)
@@ -304,9 +338,9 @@ def _remote_user_info(remote_name: str, local_backup_path: str) -> tuple[str, st
 def _ucloud_remote_info(remote_name: str, repo_name: str) -> tuple[str, str, None, str]:
     """Get UCloud remote info."""
     default_base = f"/work/rclone-backup/{repo_name}"
-    base_folder = input(
-        f"Enter base folder for {remote_name} [{default_base}]: "
-    ).strip() or default_base
+    base_folder = (
+        input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
+    )
     base_folder = _ensure_repo_suffix(base_folder, repo_name)
     return remote_name, "ucloud", None, base_folder
 
@@ -314,10 +348,7 @@ def _ucloud_remote_info(remote_name: str, repo_name: str) -> tuple[str, str, Non
 def _local_remote_info(remote_name: str, repo_name: str) -> tuple[str, None, None, str | None]:
     """Get local remote info."""
     base_folder = (
-        input("Please enter the local path for rclone: ")
-        .strip()
-        .replace("'", "")
-        .replace('"', "")
+        input("Please enter the local path for rclone: ").strip().replace("'", "").replace('"', "")
     )
     base_folder = check_path_format(base_folder)
     if not os.path.isdir(base_folder):
@@ -330,9 +361,9 @@ def _local_remote_info(remote_name: str, repo_name: str) -> tuple[str, None, Non
 def _oauth_remote_info(remote_name: str, repo_name: str) -> tuple[str, None, None, str]:
     """Get OAuth remote info (Dropbox, OneDrive, etc.)."""
     default_base = f"rclone-backup/{repo_name}"
-    base_folder = input(
-        f"Enter base folder for {remote_name} [{default_base}]: "
-    ).strip() or default_base
+    base_folder = (
+        input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
+    )
     base_folder = _ensure_repo_suffix(base_folder, repo_name)
     return remote_name, None, None, base_folder
 
@@ -352,9 +383,9 @@ def _lumi_remote_info(remote_name: str, repo_name: str) -> tuple[str, None, None
 def _generic_remote_info(remote_name: str, repo_name: str) -> tuple[str, None, None, str]:
     """Get generic remote info."""
     default_base = f"rclone-backup/{repo_name}"
-    base_folder = input(
-        f"Enter base folder for {remote_name} [{default_base}]: "
-    ).strip() or default_base
+    base_folder = (
+        input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
+    )
     base_folder = _ensure_repo_suffix(base_folder, repo_name)
     return remote_name, None, None, base_folder
 
@@ -363,8 +394,11 @@ def check_rclone_remote(remote_name: str) -> bool:
     """Check if rclone remote is configured."""
     try:
         result = subprocess.run(
-            ["rclone", "listremotes"], check=True, stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
+            ["rclone", "listremotes"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=DEFAULT_TIMEOUT,
         )
         remotes = result.stdout.decode("utf-8").splitlines()
         return f"{remote_name}:" in remotes
@@ -378,11 +412,17 @@ def check_rclone_remote(remote_name: str) -> bool:
 
 def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
     command = [
-        "rclone", "config", "create",
-        remote_name, "sftp",
-        "host", load_from_env("HOST"),
-        "port", load_from_env("PORT"),
-        "user", login,
+        "rclone",
+        "config",
+        "create",
+        remote_name,
+        "sftp",
+        "host",
+        load_from_env("HOST"),
+        "port",
+        load_from_env("PORT"),
+        "user",
+        login,
     ]
 
     if pass_key:
@@ -398,14 +438,23 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
     acl = "public-read" if "public" in remote_name.lower() else "private"
 
     command = [
-        "rclone", "config", "create",
-        remote_name, "s3",
-        "provider", "Other",
-        "endpoint", "https://lumidata.eu",
-        "access_key_id", login,
-        "secret_access_key", pass_key,
-        "region", "other-v2-signature",
-        "acl", acl,
+        "rclone",
+        "config",
+        "create",
+        remote_name,
+        "s3",
+        "provider",
+        "Other",
+        "endpoint",
+        "https://lumidata.eu",
+        "access_key_id",
+        login,
+        "secret_access_key",
+        pass_key,
+        "region",
+        "other-v2-signature",
+        "acl",
+        acl,
     ]
 
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
@@ -467,7 +516,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
 
     # Build list/mkdir commands
     if remote_type in ["dropbox", "onedrive", "drive"]:
-        base_folder = base_folder.lstrip('/')
+        base_folder = base_folder.lstrip("/")
         list_cmd = ["rclone", "lsd", f"{remote_name}:{base_folder}"]
         mkdir_cmd = ["rclone", "mkdir", f"{remote_name}:{base_folder}"]
     elif "lumi" in remote_type:
@@ -494,17 +543,27 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
     if result.returncode == 0 and result.stdout.strip():
         valid_choices = {"o": "overwrite", "s": "merge/sync", "n": "rename", "c": "cancel"}
         while True:
-            choice = input(
-                f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Rename (n), Cancel (c)? [o/s/n/c]: "
-            ).strip().lower()
+            choice = (
+                input(
+                    f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Rename (n), Cancel (c)? [o/s/n/c]: "
+                )
+                .strip()
+                .lower()
+            )
             if choice not in valid_choices:
-                print(f"Invalid choice: {choice}. Please choose one of {', '.join(valid_choices.keys())}.")
+                print(
+                    f"Invalid choice: {choice}. Please choose one of {', '.join(valid_choices.keys())}."
+                )
                 continue
 
             if choice == "o":
                 print("⚠️ Warning: You chose to overwrite the remote folder.")
-                subprocess.run(["rclone", "purge", f"{remote_name}:{base_folder}"] + (["--config", str(rclone_conf)] if remote_name.lower() == "ucloud" else []),
-                               check=True, timeout=DEFAULT_TIMEOUT)
+                subprocess.run(
+                    ["rclone", "purge", f"{remote_name}:{base_folder}"]
+                    + (["--config", str(rclone_conf)] if remote_name.lower() == "ucloud" else []),
+                    check=True,
+                    timeout=DEFAULT_TIMEOUT,
+                )
                 break
 
             elif choice == "s":
@@ -515,8 +574,10 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
             elif choice == "n":
                 base_folder = input("New folder name: ").strip()
                 if remote_type in ["dropbox", "onedrive", "drive"]:
-                    base_folder = base_folder.lstrip('/')
-                result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
+                    base_folder = base_folder.lstrip("/")
+                result = subprocess.run(
+                    list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT
+                )
                 continue
 
             elif choice == "c":
@@ -539,19 +600,22 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
         print("\nRunning diff report before syncing...")
         rclone_diff_report(local_backup_path, remote_full_path)
         print("\nSyncing differences to merge local and remote...")
-        _rclone_transfer(remote_name=remote_name,
-                         local_path=local_backup_path,
-                         remote_path=remote_full_path,
-                         action="push",
-                         operation="copy")  # copy to avoid deleting
+        _rclone_transfer(
+            remote_name=remote_name,
+            local_path=local_backup_path,
+            remote_path=remote_full_path,
+            action="push",
+            operation="copy",
+        )  # copy to avoid deleting
 
 
 def list_remotes():
     """List all configured remotes and their status."""
     print("\n🔌 Rclone Remotes:")
     try:
-        result = subprocess.run(["rclone", "listremotes"], check=True, 
-                              stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT)
+        result = subprocess.run(
+            ["rclone", "listremotes"], check=True, stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
+        )
         rclone_configured = set(r.rstrip(":") for r in result.stdout.decode().splitlines())
     except Exception as e:
         print(f"Failed to list remotes: {e}")
@@ -564,8 +628,14 @@ def list_remotes():
     else:
         for remote, meta in all_remotes.items():
             remote_path = meta.get("remote_path") if isinstance(meta, dict) else meta
-            local_path = meta.get("local_path", "Not specified") if isinstance(meta, dict) else "Not specified"
-            remote_type = meta.get("remote_type", "unknown") if isinstance(meta, dict) else "unknown"
+            local_path = (
+                meta.get("local_path", "Not specified")
+                if isinstance(meta, dict)
+                else "Not specified"
+            )
+            remote_type = (
+                meta.get("remote_type", "unknown") if isinstance(meta, dict) else "unknown"
+            )
             action = meta.get("last_action") if isinstance(meta, dict) else "-"
             operation = meta.get("last_operation") if isinstance(meta, dict) else "-"
             timestamp = meta.get("timestamp") if isinstance(meta, dict) else "-"
@@ -574,7 +644,9 @@ def list_remotes():
             print(f"  - {remote} ({remote_type}):")
             print(f"      Remote: {remote_path}")
             print(f"      Local:  {local_path}")
-            print(f"      Action: {action} | Operation: {operation} | Timestamp: {timestamp} | Status: {status} {status_note}")
+            print(
+                f"      Action: {action} | Operation: {operation} | Timestamp: {timestamp} | Status: {status} {status_note}"
+            )
 
 
 def setup_rclone(remote_name: str = None, local_backup_path: str = None):
@@ -648,7 +720,7 @@ def list_supported_remote_types() -> str:
             check=True,
             stdout=subprocess.PIPE,
             text=True,
-            timeout=DEFAULT_TIMEOUT
+            timeout=DEFAULT_TIMEOUT,
         )
         print("\n📦 Supported Rclone Remote Types:")
         print("\nRecommended: ['ERDA' ,'Ucloud', 'Lumi','Dropbox', 'Onedrive', 'Local']\n")
@@ -658,4 +730,3 @@ def list_supported_remote_types() -> str:
     except subprocess.CalledProcessError as e:
         print(f"Error fetching remote types: {e}")
         return ""
-    
