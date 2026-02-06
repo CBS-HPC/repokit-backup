@@ -19,6 +19,7 @@ dev = [
 ]
 [project.scripts]
 backup = "repokit_backup.cli:main"
+repokit-backup = "repokit_backup.cli:main"
 
 [tool.ruff]
 line-length = 100
@@ -26,5 +27,3 @@ target-version = "py312"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-

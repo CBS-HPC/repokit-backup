@@ -4,6 +4,9 @@ CLI interface - Argument parsing and command dispatch.
 
 import sys
 import argparse
+import pathlib
+
+import repokit_common
 
 #from ..common import ensure_correct_kernel
 from .rclone import push_rclone, pull_rclone, generate_diff_report, transfer_between_remotes, install_rclone
@@ -21,6 +24,9 @@ from .remotes import (
 #@ensure_correct_kernel
 def main():
     """Main CLI entry point."""
+    # When running standalone, treat the current working directory as the project root.
+    repokit_common.PROJECT_ROOT = pathlib.Path.cwd().resolve()
+
     if not install_rclone("./bin"):
         print("Error: rclone installation/verification failed.")
         sys.exit(1)
