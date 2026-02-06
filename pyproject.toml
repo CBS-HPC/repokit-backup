@@ -5,11 +5,30 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "repokit-backup"
 version = "0.1"
+description = "Backup and sync CLI for Repokit"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "CBS-HPC"}]
+keywords = ["research", "reproducibility", "automation", "data-management"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+]
+
 dependencies = [
   "requests",
   "repokit-common",
 ]
+
 requires-python = ">=3.12"
+
+[project.urls]
+Homepage = "https://github.com/CBS-HPC/repokit-backup"
+Repository = "https://github.com/CBS-HPC/repokit-backup"
+Issues = "https://github.com/CBS-HPC/repokit-backup/issues"
+
 
 [project.optional-dependencies]
 dev = [
