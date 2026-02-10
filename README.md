@@ -5,7 +5,7 @@
 
 Backup and synchronization utilities built on rclone. Works with the Research Template and can be used standalone.
 
-## What it does
+## ?? What it does
 
 Data loss can compromise months or years of research. This package provides automated backup to CBS-approved storage providers using rclone.
 
@@ -23,17 +23,17 @@ Notes:
 - Other rclone remotes should work, but are not yet tested with this workflow
 - All configured remotes and folder mappings are stored in `./bin/rclone_remote.json`
 
-## Installation
+## ?? Installation
 
 ```bash
 pip install repokit-backup
 ```
 
-## Requirements
+## ?? Requirements
 
 - `rclone` on `PATH` (auto-installed if missing)
 
-## CLI
+## ?? CLI
 
 | Command | Description |
 |---------|-------------|
@@ -46,7 +46,7 @@ pip install repokit-backup
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
 
-## Examples
+## ?? Examples
 
 Setup a remote:
 
@@ -155,6 +155,6 @@ repokit-backup types
 ---
 </details>
 
-## License
+## ?? License
 
 MIT
