@@ -90,7 +90,7 @@ def install_rclone(install_path: str = "./bin") -> bool:
         os.chmod(rclone_path, 0o755)
         return rclone_path
 
-    if not is_installed("rclone", "Rclone", local_install=True):
+    if not is_installed("rclone", "Rclone", local_path="./bin"):
         rclone_path = download_rclone(install_path)
         return exe_to_path("rclone", os.path.dirname(rclone_path))
     return True
