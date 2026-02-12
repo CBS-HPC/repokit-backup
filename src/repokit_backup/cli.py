@@ -93,7 +93,7 @@ def main():
 
     # Delete command
     delete = subparsers.add_parser("delete", help="Delete a remote and its mapping")
-    delete.add_argument("--remote", required=True, help="Remote name")
+    delete.add_argument("--remote", required=True, help="Remote name or 'all'")
 
     # Diff command
     diff = subparsers.add_parser("diff", help="Generate a diff report for a remote")

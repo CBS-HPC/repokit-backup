@@ -410,6 +410,110 @@ def check_rclone_remote(remote_name: str) -> bool:
         return False
 
 
+def _list_rclone_remotes(config_path: pathlib.Path | None = None) -> set[str]:
+    """Return configured remote names, optionally from a specific rclone config file."""
+    cmd = ["rclone", "listremotes"]
+    if config_path is not None:
+        cmd += ["--config", str(config_path)]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        return {line.rstrip(":").strip() for line in result.stdout.splitlines() if line.strip()}
+    except Exception:
+        return set()
+
+
+def _default_rclone_config_path() -> pathlib.Path | None:
+    """Resolve the default rclone config path via `rclone config file`."""
+    try:
+        result = subprocess.run(
+            ["rclone", "config", "file"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except Exception:
+        return None
+
+    for line in result.stdout.splitlines():
+        if ":" in line:
+            maybe_path = line.split(":", 1)[1].strip()
+            if maybe_path:
+                return pathlib.Path(maybe_path).expanduser().resolve()
+    return None
+
+
+def _delete_config_if_no_remotes(config_path: pathlib.Path | None = None):
+    """Delete a config file when it has no remotes configured."""
+    target = config_path or _default_rclone_config_path()
+    if target is None or not target.exists():
+        return
+
+    remotes = _list_rclone_remotes(config_path if config_path is not None else None)
+    if remotes:
+        return
+
+    try:
+        target.unlink()
+        print(f"No remotes left. Deleted config file: {target}")
+    except Exception as e:
+        print(f"Could not delete config file '{target}': {e}")
+
+
+def _delete_single_remote(remote_name: str, verbose: int = 0):
+    """Delete one remote mapping and cleanup config files when empty."""
+    remote_name = remote_name.strip().lower()
+    remote_path, _ = load_registry(remote_name)
+
+    rclone_conf = None
+    if remote_name.startswith("ucloud"):
+        ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+        if ucloud_conf.exists():
+            rclone_conf = ucloud_conf
+
+    if remote_path:
+        purge_cmd = ["rclone", "purge", remote_path] + _rc_verbose_args(verbose)
+        if rclone_conf is not None:
+            purge_cmd += ["--config", str(rclone_conf)]
+
+        try:
+            print(f"Attempting to purge remote folder at: {remote_path}")
+            subprocess.run(purge_cmd, check=True, timeout=DEFAULT_TIMEOUT)
+            print(f"Successfully purged remote folder: {remote_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Could not purge remote folder '{remote_path}': {e}")
+        except Exception as e:
+            print(f"Unexpected error during purge: {e}")
+    else:
+        print(f"No registry mapping found for '{remote_name}'. Skipping purge.")
+
+    delete_cmd = ["rclone", "config", "delete", remote_name] + _rc_verbose_args(verbose)
+    if rclone_conf is not None:
+        delete_cmd += ["--config", str(rclone_conf)]
+
+    try:
+        subprocess.run(delete_cmd, check=True, timeout=DEFAULT_TIMEOUT)
+        print(f"Rclone remote '{remote_name}' deleted from rclone configuration.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error deleting remote from rclone: {e}")
+
+    delete_from_registry(remote_name)
+
+    # Always cleanup empty config files after single-remote deletion.
+    _delete_config_if_no_remotes()
+    ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+    if ucloud_conf.exists():
+        _delete_config_if_no_remotes(ucloud_conf)
+
+
 def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
     command = [
         "rclone",
@@ -534,7 +638,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 list_cmd += ["--config", str(rclone_conf)]
                 mkdir_cmd += ["--config", str(rclone_conf)]
             else:
-                print("⚠️ ucloud rclone config not found in ./bin. Please run set_host_port first.")
+                print("âš ï¸ ucloud rclone config not found in ./bin. Please run set_host_port first.")
                 return
 
     # Check if remote folder exists
@@ -557,7 +661,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 continue
 
             if choice == "o":
-                print("⚠️ Warning: You chose to overwrite the remote folder.")
+                print("âš ï¸ Warning: You chose to overwrite the remote folder.")
                 subprocess.run(
                     ["rclone", "purge", f"{remote_name}:{base_folder}"]
                     + (["--config", str(rclone_conf)] if remote_name.lower() == "ucloud" else []),
@@ -567,7 +671,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 break
 
             elif choice == "s":
-                print("ℹ️ Will merge/sync differences only.")
+                print("â„¹ï¸ Will merge/sync differences only.")
                 merge_only = True
                 break
 
@@ -611,7 +715,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
 
 def list_remotes():
     """List all configured remotes and their status."""
-    print("\n🔌 Rclone Remotes:")
+    print("\nðŸ”Œ Rclone Remotes:")
     try:
         result = subprocess.run(
             ["rclone", "listremotes"], check=True, stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
@@ -621,7 +725,7 @@ def list_remotes():
         print(f"Failed to list remotes: {e}")
         rclone_configured = set()
 
-    print("\n📁 Mapped Backup Folders:")
+    print("\nðŸ“ Mapped Backup Folders:")
     all_remotes = load_all_registry()
     if not all_remotes:
         print("  No folders registered.")
@@ -640,7 +744,7 @@ def list_remotes():
             operation = meta.get("last_operation") if isinstance(meta, dict) else "-"
             timestamp = meta.get("timestamp") if isinstance(meta, dict) else "-"
             status = meta.get("status") if isinstance(meta, dict) else "-"
-            status_note = "✅" if remote in rclone_configured else "⚠️ missing in rclone config"
+            status_note = "âœ…" if remote in rclone_configured else "âš ï¸ missing in rclone config"
             print(f"  - {remote} ({remote_type}):")
             print(f"      Remote: {remote_path}")
             print(f"      Local:  {local_path}")
@@ -665,52 +769,38 @@ def setup_rclone(remote_name: str = None, local_backup_path: str = None):
 
 
 def delete_remote(remote_name: str, verbose: int = 0):
-    """Delete remote and all its data, supporting ucloud custom config."""
-    remote_path, _ = load_registry(remote_name)
-    if not remote_path:
+    """Delete one remote or all remotes (`remote_name='all'`)."""
+    remote_name = remote_name.strip().lower()
+
+    if remote_name == "all":
+        registry_remotes = set(load_all_registry().keys())
+        default_cfg_remotes = _list_rclone_remotes()
+        ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+        ucloud_cfg_remotes = _list_rclone_remotes(ucloud_conf) if ucloud_conf.exists() else set()
+
+        all_remotes = sorted(registry_remotes | default_cfg_remotes | ucloud_cfg_remotes)
+        if not all_remotes:
+            print("No remotes found.")
+            _delete_config_if_no_remotes()
+            if ucloud_conf.exists():
+                _delete_config_if_no_remotes(ucloud_conf)
+            return
+
+        confirm = input(
+            f"Really delete ALL data and config entries for all remotes ({', '.join(all_remotes)})? [y/N]: "
+        )
+        if confirm.lower() != "y":
+            return
+
+        for name in all_remotes:
+            _delete_single_remote(name, verbose=verbose)
         return
 
     confirm = input(f"Really delete ALL data for '{remote_name}'? [y/N]: ")
     if confirm.lower() != "y":
         return
 
-    # Build rclone purge command
-    purge_cmd = ["rclone", "purge", remote_path] + _rc_verbose_args(verbose)
-
-    # Use custom ucloud config if applicable
-    if remote_name.lower().startswith("ucloud"):
-        rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
-        if rclone_conf.exists():
-            purge_cmd += ["--config", str(rclone_conf)]
-        else:
-            print("⚠️ ucloud rclone config not found in ./bin. Cannot purge remote.")
-            return
-
-    # Attempt to purge remote folder
-    try:
-        print(f"Attempting to purge remote folder at: {remote_path}")
-        subprocess.run(purge_cmd, check=True, timeout=DEFAULT_TIMEOUT)
-        print(f"Successfully purged remote folder: {remote_path}")
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ Warning: Could not purge remote folder '{remote_path}': {e}")
-    except Exception as e:
-        print(f"Unexpected error during purge: {e}")
-
-    # Delete remote from rclone config
-    delete_cmd = ["rclone", "config", "delete", remote_name] + _rc_verbose_args(verbose)
-
-    if remote_name.lower().startswith("ucloud"):
-        delete_cmd += ["--config", str(rclone_conf)]
-
-    try:
-        subprocess.run(delete_cmd, check=True, timeout=DEFAULT_TIMEOUT)
-        print(f"Rclone remote '{remote_name}' deleted from rclone configuration.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error deleting remote from rclone: {e}")
-
-    # Remove from local registry
-    delete_from_registry(remote_name)
-
+    _delete_single_remote(remote_name, verbose=verbose)
 
 def list_supported_remote_types() -> str:
     """List all supported rclone backend types."""
@@ -722,7 +812,7 @@ def list_supported_remote_types() -> str:
             text=True,
             timeout=DEFAULT_TIMEOUT,
         )
-        print("\n📦 Supported Rclone Remote Types:")
+        print("\nðŸ“¦ Supported Rclone Remote Types:")
         print("\nRecommended: ['ERDA' ,'Ucloud', 'Lumi','Dropbox', 'Onedrive', 'Local']\n")
         print("\nSupported by Rclone:\n")
         print(result.stdout)
