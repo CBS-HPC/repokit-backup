@@ -27,11 +27,59 @@ from .remotes import (
 )
 
 
+def _ensure_rcloneignore_pyproject_config() -> None:
+    """
+    Ensure pyproject.toml exists and has [tool.rcloneignore] defaults.
+    """
+    defaults = {
+        "tool-description": "Ignore patterns for backup and remote synchronization.",
+        "tool-replaces": ".rcloneignore",
+        "patterns": ["bin/", ".venv/", ".conda/"],
+    }
+
+    current = repokit_common.read_toml(
+        folder=str(repokit_common.PROJECT_ROOT),
+        json_filename=repokit_common.JSON_FILENAME,
+        tool_name="rcloneignore",
+        toml_path=repokit_common.TOML_PATH,
+    ) or {}
+
+    patterns = current.get("patterns", [])
+    if isinstance(patterns, str):
+        pattern_list = [patterns]
+    elif isinstance(patterns, list):
+        pattern_list = [p for p in patterns if isinstance(p, str) and p.strip()]
+    else:
+        pattern_list = []
+
+    merged_patterns = list(pattern_list)
+    seen = {p.strip() for p in pattern_list}
+    for p in defaults["patterns"]:
+        if p not in seen:
+            merged_patterns.append(p)
+            seen.add(p)
+
+    payload = {
+        "tool-description": current.get("tool-description") or defaults["tool-description"],
+        "tool-replaces": current.get("tool-replaces") or defaults["tool-replaces"],
+        "patterns": merged_patterns,
+    }
+
+    repokit_common.write_toml(
+        data=payload,
+        folder=str(repokit_common.PROJECT_ROOT),
+        json_filename=repokit_common.JSON_FILENAME,
+        tool_name="rcloneignore",
+        toml_path=repokit_common.TOML_PATH,
+    )
+
+
 # @ensure_correct_kernel
 def main():
     """Main CLI entry point."""
     # When running standalone, treat the current working directory as the project root.
     repokit_common.PROJECT_ROOT = pathlib.Path.cwd().resolve()
+    _ensure_rcloneignore_pyproject_config()
 
     if not install_rclone("./bin"):
         print("Error: rclone installation/verification failed.")
