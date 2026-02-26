@@ -12,8 +12,8 @@ Supported backup targets:
 - [**ERDA**](https://erda.dk/)  (SFTP with password + MFA) 
 - [**Dropbox**](https://www.dropbox.com/)  
 - [**OneDrive**](https://onedrive.live.com/)  
-- **Local** storage â€“ backup to a folder on your own system  
-- **Multiple** â€“ select any combination of the above
+- **Local** storage - backup to a folder on your own system  
+- **Multiple** - select any combination of the above
 
 Notes:
 

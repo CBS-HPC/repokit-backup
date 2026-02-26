@@ -92,8 +92,16 @@ def install_rclone(install_path: str = "./bin") -> bool:
 
     if not is_installed("rclone", "Rclone", local_path="./bin"):
         rclone_path = download_rclone(install_path)
-        return exe_to_path("rclone", os.path.dirname(rclone_path))
-    return True
+        if not rclone_path:
+            return False
+        rclone_dir = os.path.dirname(rclone_path)
+    else:
+        # Even when already installed, ensure process PATH includes the resolved local dir.
+        rclone_dir = os.environ.get("RCLONE")
+        if not rclone_dir:
+            rclone_dir = str((PROJECT_ROOT / pathlib.Path(install_path)).resolve())
+
+    return exe_to_path("rclone", rclone_dir)
 
 
 def _rclone_transfer(

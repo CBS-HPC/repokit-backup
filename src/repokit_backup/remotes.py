@@ -59,11 +59,15 @@ from .rclone import (
 
 
 
+def _rclone_cmd(*args: str) -> list[str]:
+    return ["rclone", *args]
+
+
 def check_rclone_remote(remote_name: str) -> bool:
     """Check if rclone remote is configured."""
     try:
         result = subprocess.run(
-            ["rclone", "listremotes"],
+            _rclone_cmd("listremotes"),
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -81,7 +85,7 @@ def check_rclone_remote(remote_name: str) -> bool:
 
 def _list_rclone_remotes(config_path: pathlib.Path | None = None) -> set[str]:
     """Return configured remote names, optionally from a specific rclone config file."""
-    cmd = ["rclone", "listremotes"]
+    cmd = _rclone_cmd("listremotes")
     if config_path is not None:
         cmd += ["--config", str(config_path)]
     try:
@@ -102,7 +106,7 @@ def _default_rclone_config_path() -> pathlib.Path | None:
     """Resolve the default rclone config path via `rclone config file`."""
     try:
         result = subprocess.run(
-            ["rclone", "config", "file"],
+            _rclone_cmd("config", "file"),
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -149,7 +153,7 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
             rclone_conf = ucloud_conf
 
     if remote_path:
-        purge_cmd = ["rclone", "purge", remote_path] + _rc_verbose_args(verbose)
+        purge_cmd = _rclone_cmd("purge", remote_path) + _rc_verbose_args(verbose)
         if rclone_conf is not None:
             purge_cmd += ["--config", str(rclone_conf)]
 
@@ -164,7 +168,7 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
     else:
         print(f"No registry mapping found for '{remote_name}'. Skipping purge.")
 
-    delete_cmd = ["rclone", "config", "delete", remote_name] + _rc_verbose_args(verbose)
+    delete_cmd = _rclone_cmd("config", "delete", remote_name) + _rc_verbose_args(verbose)
     if rclone_conf is not None:
         delete_cmd += ["--config", str(rclone_conf)]
 
@@ -184,8 +188,7 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
 
 
 def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
-    command = [
-        "rclone",
+    command = _rclone_cmd(
         "config",
         "create",
         remote_name,
@@ -196,7 +199,7 @@ def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
         load_from_env("PORT"),
         "user",
         login,
-    ]
+    )
 
     if pass_key:
         command += ["pass", pass_key, "--obscure"]
@@ -210,8 +213,7 @@ def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
 def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
     acl = "public-read" if "public" in remote_name.lower() else "private"
 
-    command = [
-        "rclone",
+    command = _rclone_cmd(
         "config",
         "create",
         remote_name,
@@ -228,7 +230,7 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
         "other-v2-signature",
         "acl",
         acl,
-    ]
+    )
 
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
     print(f"Rclone remote '{remote_name}' (lumi) created.")
@@ -236,7 +238,7 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
 
 def _add_simple_remote(remote_name: str, base_type: str):
     print(f"You will need to authorize rclone with {base_type}")
-    command = ["rclone", "config", "create", remote_name, base_type]
+    command = _rclone_cmd("config", "create", remote_name, base_type)
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
     print(f"Rclone remote '{remote_name}' created.")
 
@@ -253,7 +255,7 @@ def _add_interactive_remote(remote_name: str, base_type: str):
         raise RuntimeError(f"Unsupported remote type: {base_type}")
 
     print(f"Running interactive config for backend '{base_type}'...")
-    command = ["rclone", "config", "create", remote_name, base_type]
+    command = _rclone_cmd("config", "create", remote_name, base_type)
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
     print(f"Rclone remote '{remote_name}' created.")
 
@@ -290,15 +292,15 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
     # Build list/mkdir commands
     if remote_type in ["dropbox", "onedrive", "drive"]:
         base_folder = base_folder.lstrip("/")
-        list_cmd = ["rclone", "lsd", f"{remote_name}:{base_folder}"]
-        mkdir_cmd = ["rclone", "mkdir", f"{remote_name}:{base_folder}"]
+        list_cmd = _rclone_cmd("lsd", f"{remote_name}:{base_folder}")
+        mkdir_cmd = _rclone_cmd("mkdir", f"{remote_name}:{base_folder}")
     elif "lumi" in remote_type:
-        list_cmd = ["rclone", "lsd", f"{remote_name}:/{base_folder}"]
-        mkdir_cmd = ["rclone", "mkdir", f"{remote_name}:/{base_folder}"]
+        list_cmd = _rclone_cmd("lsd", f"{remote_name}:/{base_folder}")
+        mkdir_cmd = _rclone_cmd("mkdir", f"{remote_name}:/{base_folder}")
     else:  # SFTP (ucloud, erda) or local
         base_folder = f"/{base_folder.lstrip('/')}"
-        list_cmd = ["rclone", "lsf", f"{remote_name}:{base_folder}"]
-        mkdir_cmd = ["rclone", "mkdir", f"{remote_name}:{base_folder}"]
+        list_cmd = _rclone_cmd("lsf", f"{remote_name}:{base_folder}")
+        mkdir_cmd = _rclone_cmd("mkdir", f"{remote_name}:{base_folder}")
 
         # Use ucloud config if remote is ucloud
         if remote_name.lower().startswith("ucloud"):
@@ -307,7 +309,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 list_cmd += ["--config", str(rclone_conf)]
                 mkdir_cmd += ["--config", str(rclone_conf)]
             else:
-                print("âš ï¸ ucloud rclone config not found in ./bin. Please run set_host_port first.")
+                print("[WARN] ucloud rclone config not found in ./bin. Please run set_host_port first.")
                 return
 
     # Check if remote folder exists
@@ -330,9 +332,9 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 continue
 
             if choice == "o":
-                print("âš ï¸ Warning: You chose to overwrite the remote folder.")
+                print("[WARN] You chose to overwrite the remote folder.")
                 subprocess.run(
-                    ["rclone", "purge", f"{remote_name}:{base_folder}"]
+                    _rclone_cmd("purge", f"{remote_name}:{base_folder}")
                     + (["--config", str(rclone_conf)] if remote_name.lower() == "ucloud" else []),
                     check=True,
                     timeout=DEFAULT_TIMEOUT,
@@ -340,7 +342,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                 break
 
             elif choice == "s":
-                print("â„¹ï¸ Will merge/sync differences only.")
+                print("[INFO] Will merge/sync differences only.")
                 merge_only = True
                 break
 
@@ -384,17 +386,17 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
 
 def list_remotes():
     """List all configured remotes and their status."""
-    print("\nðŸ”Œ Rclone Remotes:")
+    print("\n[REMOTES] Rclone Remotes:")
     try:
         result = subprocess.run(
-            ["rclone", "listremotes"], check=True, stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
+            _rclone_cmd("listremotes"), check=True, stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
         )
         rclone_configured = set(r.rstrip(":") for r in result.stdout.decode().splitlines())
     except Exception as e:
         print(f"Failed to list remotes: {e}")
         rclone_configured = set()
 
-    print("\nðŸ“ Mapped Backup Folders:")
+    print("\n[FOLDERS] Mapped Backup Folders:")
     all_remotes = load_all_registry()
     if not all_remotes:
         print("  No folders registered.")
@@ -413,7 +415,7 @@ def list_remotes():
             operation = meta.get("last_operation") if isinstance(meta, dict) else "-"
             timestamp = meta.get("timestamp") if isinstance(meta, dict) else "-"
             status = meta.get("status") if isinstance(meta, dict) else "-"
-            status_note = "âœ…" if remote in rclone_configured else "âš ï¸ missing in rclone config"
+            status_note = "[OK]" if remote in rclone_configured else "[WARN] missing in rclone config"
             print(f"  - {remote} ({remote_type}):")
             print(f"      Remote: {remote_path}")
             print(f"      Local:  {local_path}")
@@ -475,13 +477,13 @@ def list_supported_remote_types() -> str:
     """List all supported rclone backend types."""
     try:
         result = subprocess.run(
-            ["rclone", "help", "backends"],
+            _rclone_cmd("help", "backends"),
             check=True,
             stdout=subprocess.PIPE,
             text=True,
             timeout=DEFAULT_TIMEOUT,
         )
-        print("\nðŸ“¦ Supported Rclone Remote Types:")
+        print("\n[TYPES] Supported Rclone Remote Types:")
         print("\nRecommended: ['ERDA' ,'Ucloud', 'Lumi','Dropbox', 'Onedrive', 'Local']\n")
         print("\nSupported by Rclone:\n")
         print(result.stdout)
