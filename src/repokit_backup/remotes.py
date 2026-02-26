@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import getpass
+import json
 
 from repokit_common import PROJECT_ROOT, load_from_env, save_to_env, check_path_format
 from .auth import set_host_port, setup_ssh_agent_and_add_key
@@ -243,6 +244,26 @@ def _add_simple_remote(remote_name: str, base_type: str):
     print(f"Rclone remote '{remote_name}' created.")
 
 
+def _validate_oauth_token_json(oauth_token: str) -> str:
+    token_str = (oauth_token or "").strip()
+    if not token_str:
+        raise ValueError("OAuth token is empty.")
+    try:
+        parsed = json.loads(token_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"OAuth token is not valid JSON: {e}") from e
+    if not isinstance(parsed, dict):
+        raise ValueError("OAuth token JSON must be an object.")
+    return json.dumps(parsed, separators=(",", ":"))
+
+
+def _add_oauth_remote_with_token(remote_name: str, base_type: str, oauth_token: str):
+    token_json = _validate_oauth_token_json(oauth_token)
+    command = _rclone_cmd("config", "create", remote_name, base_type, "token", token_json)
+    subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+    print(f"Rclone remote '{remote_name}' created using provided OAuth token.")
+
+
 def _add_interactive_remote(remote_name: str, base_type: str):
     output = list_supported_remote_types()
     backend_types = [
@@ -260,10 +281,16 @@ def _add_interactive_remote(remote_name: str, base_type: str):
     print(f"Rclone remote '{remote_name}' created.")
 
 
-def _add_remote(remote_name: str, login: str = None, pass_key: str = None):
+def _add_remote(
+    remote_name: str,
+    login: str = None,
+    pass_key: str = None,
+    oauth_token: str | None = None,
+):
     """Add a new rclone remote or prepare runtime config."""
     remote_type = _detect_remote_type(remote_name)
     base_type = _get_base_remote_type(remote_name)
+    oauth_remotes = {"dropbox", "onedrive", "drive"}
 
     try:
         if remote_type == "erda":
@@ -275,10 +302,24 @@ def _add_remote(remote_name: str, login: str = None, pass_key: str = None):
         elif "lumi" in remote_type:
             _add_lumi_remote(remote_name, login, pass_key)
 
-        elif remote_type in {"dropbox", "onedrive", "drive", "local"}:
+        elif remote_type in oauth_remotes:
+            if oauth_token:
+                _add_oauth_remote_with_token(remote_name, base_type, oauth_token)
+            else:
+                _add_simple_remote(remote_name, base_type)
+
+        elif remote_type == "local":
+            if oauth_token:
+                print(
+                    "[WARN] --token was provided for a non-OAuth backend ('local'). Ignoring token."
+                )
             _add_simple_remote(remote_name, base_type)
 
         else:
+            if oauth_token:
+                print(
+                    f"[WARN] --token was provided for backend '{remote_type}' which is not OAuth-based. Ignoring token."
+                )
             _add_interactive_remote(remote_name, base_type)
 
     except Exception as e:
@@ -424,7 +465,11 @@ def list_remotes():
             )
 
 
-def setup_rclone(remote_name: str = None, local_backup_path: str = None):
+def setup_rclone(
+    remote_name: str = None,
+    local_backup_path: str = None,
+    oauth_token: str | None = None,
+):
     """Setup rclone remote and folder mapping."""
     if local_backup_path is None:
         local_backup_path = str(PROJECT_ROOT)
@@ -433,7 +478,7 @@ def setup_rclone(remote_name: str = None, local_backup_path: str = None):
         remote_name, login_key, pass_key, base_folder = _remote_user_info(
             remote_name.lower(), local_backup_path, pathlib.Path(PROJECT_ROOT)
         )
-        _add_remote(remote_name.lower(), login_key, pass_key)
+        _add_remote(remote_name.lower(), login_key, pass_key, oauth_token=oauth_token)
         _add_folder(remote_name.lower(), base_folder, local_backup_path)
     else:
         install_rclone("./bin")

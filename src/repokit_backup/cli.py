@@ -111,6 +111,11 @@ def main():
         dest="local_path",
         help="Specific local path to backup",
     )
+    add.add_argument(
+        "--token",
+        dest="oauth_token",
+        help="OAuth token JSON for headless setup (dropbox/onedrive/drive)",
+    )
 
     # Push command
     push = subparsers.add_parser("push", help="Push/backup to remote")
@@ -182,7 +187,11 @@ def main():
 
         # Dispatch commands
         if args.command == "add":
-            setup_rclone(remote, local_backup_path=args.local_path)
+            setup_rclone(
+                remote,
+                local_backup_path=args.local_path,
+                oauth_token=getattr(args, "oauth_token", None),
+            )
 
         elif args.command == "push":
             mode = getattr(args, "mode", "sync")

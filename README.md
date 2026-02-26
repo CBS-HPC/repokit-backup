@@ -52,6 +52,20 @@ Setup a remote:
 repokit-backup add --remote erda
 ```
 
+Setup OAuth remote non-interactively (headless/container):
+
+```bash
+repokit-backup add --remote dropbox --token '<PASTE_TOKEN_JSON>'
+```
+
+`--token` is supported for OAuth remotes:
+
+- `dropbox`
+- `onedrive`
+- `drive`
+
+For non-OAuth remotes, `--token` is ignored.
+
 Push to remote:
 
 ```bash
@@ -93,6 +107,26 @@ View supported remote types:
 ```bash
 repokit-backup types
 ```
+
+## Headless OAuth in containers
+
+If your runtime cannot open a browser (for example, Ubuntu container/VM), create the token on another machine and pass it with `--token`.
+
+On a machine with browser access:
+
+```bash
+rclone authorize "dropbox"
+```
+
+Copy the returned JSON token object.
+
+Then in your container:
+
+```bash
+repokit-backup add --remote dropbox --token '<PASTE_TOKEN_JSON>'
+```
+
+The same flow applies to `onedrive` and `drive` by replacing `"dropbox"` in `rclone authorize`.
 
 ## License
 
