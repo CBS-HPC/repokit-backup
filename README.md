@@ -140,6 +140,25 @@ repokit-backup add --remote dropbox --token-file ./token.json
 
 The same flow applies to `onedrive` and `drive` by replacing `"dropbox"` in `rclone authorize`.
 
+## SSH tunnel OAuth mode
+
+For remote/headless sessions where you can keep an SSH tunnel open from your local browser machine:
+
+```bash
+repokit-backup add --remote dropbox --ssh-mode
+```
+
+`repokit-backup` will print:
+
+- the SSH tunnel command to run on your local machine
+- instructions to open the exact OAuth callback URL printed by `rclone` (`/auth?state=...`)
+
+Important:
+
+- open the full `/auth?state=...` URL exactly as printed by `rclone`
+- do not open only `http://127.0.0.1:53682/`
+- if tunnel-based callback fails, use `--token-file` as the fallback
+
 ## License
 
 MIT
