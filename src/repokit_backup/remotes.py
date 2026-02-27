@@ -249,12 +249,23 @@ def _is_port_listening(host: str, port: int, retries: int = 5, delay_s: float = 
     return False
 
 
+def _is_local_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _add_simple_remote(
     remote_name: str,
     base_type: str,
     ssh_mode: bool = False,
-    callback_port: int = 53682,
+    callback_port: int | None = None,
 ):
+    if callback_port is not None and _is_local_port_in_use(callback_port):
+        raise RuntimeError(
+            f"APP_PORT {callback_port} is already in use on the remote host. "
+            "Choose another APP_PORT or stop the running service."
+        )
+
     print(f"You will need to authorize rclone with {base_type}")
     command = _rclone_cmd("config", "create", remote_name, base_type)
     if not ssh_mode:
@@ -291,10 +302,23 @@ def _add_simple_remote(
     print(f"Rclone remote '{remote_name}' created.")
 
 
-def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
+def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> int:
     """Prompt SSH endpoint and print local tunnel command for OAuth callback flow."""
     default_host = (load_from_env("SSH_HOST") or "").strip()
     default_port = (load_from_env("SSH_PORT") or "22").strip()
+    default_app_port = (load_from_env("APP_PORT") or str(app_port)).strip()
+
+    app_port_prompt = f"App port [{default_app_port}]: "
+    entered_app_port = input(app_port_prompt).strip()
+    app_port_str = entered_app_port or default_app_port
+    if not app_port_str.isdigit() or not (1 <= int(app_port_str) <= 65535):
+        raise ValueError("App port must be an integer in range 1-65535.")
+    app_port = int(app_port_str)
+    if _is_local_port_in_use(app_port):
+        raise ValueError(
+            f"APP_PORT {app_port} is already in use on the remote host. "
+            "Choose another APP_PORT or stop the running service."
+        )
 
     host_prompt = f"SSH host/user (user@host){f' [{default_host}]' if default_host else ''}: "
     entered_host = input(host_prompt).strip()
@@ -307,6 +331,7 @@ def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
     entered_port = input(port_prompt).strip()
     ssh_port = entered_port or default_port
 
+    save_to_env(str(app_port), "APP_PORT")
     save_to_env(ssh_host, "SSH_HOST")
     save_to_env(ssh_port, "SSH_PORT")
 
@@ -326,6 +351,7 @@ def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
     print(f"- Do NOT open only: http://127.0.0.1:{app_port}/")
     print("- Use the full /auth?state=... link from rclone output.")
     print()
+    return app_port
 
 
 def _validate_oauth_token_json(oauth_token: str) -> str:
@@ -390,12 +416,22 @@ def _add_remote(
             return True
 
         elif remote_type in oauth_remotes:
+            callback_port = 53682
+            env_app_port = (load_from_env("APP_PORT") or "").strip()
+            if env_app_port.isdigit() and (1 <= int(env_app_port) <= 65535):
+                callback_port = int(env_app_port)
+
             if oauth_token:
                 _add_oauth_remote_with_token(remote_name, base_type, oauth_token)
             else:
                 if ssh_mode:
-                    _prompt_ssh_tunnel_for_oauth()
-                _add_simple_remote(remote_name, base_type, ssh_mode=ssh_mode)
+                    callback_port = _prompt_ssh_tunnel_for_oauth(callback_port)
+                _add_simple_remote(
+                    remote_name,
+                    base_type,
+                    ssh_mode=ssh_mode,
+                    callback_port=callback_port,
+                )
             return True
 
         elif remote_type == "local":
