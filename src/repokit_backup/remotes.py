@@ -314,7 +314,10 @@ def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
     print("\n=== SSH tunnel for OAuth callback ===")
     print("Run this on your LOCAL machine before continuing authorization:")
     print(f"  {cmd}")
-    print(f"Then complete login at: http://127.0.0.1:{app_port}/")
+    print(
+        "Then open the exact '/auth?state=...' URL printed by rclone in your LOCAL browser "
+        f"(through http://127.0.0.1:{app_port})."
+    )
     print()
 
 
