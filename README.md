@@ -23,6 +23,8 @@ Notes:
 
 ## Installation
 
+> Note: `repokit-backup` is not published on PyPI yet. Use local wheel/source installation for now.
+
 Install from PyPI:
 
 ```bash
