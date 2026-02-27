@@ -244,6 +244,33 @@ def _add_simple_remote(remote_name: str, base_type: str):
     print(f"Rclone remote '{remote_name}' created.")
 
 
+def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
+    """Prompt SSH endpoint and print local tunnel command for OAuth callback flow."""
+    default_host = (load_from_env("SSH_HOST") or "").strip()
+    default_port = (load_from_env("SSH_PORT") or "22").strip()
+
+    host_prompt = f"SSH host/user (user@host){f' [{default_host}]' if default_host else ''}: "
+    entered_host = input(host_prompt).strip()
+    ssh_host = entered_host or default_host
+    if not ssh_host:
+        print("SSH host is required for --ssh-mode.")
+        raise ValueError("Missing SSH host")
+
+    port_prompt = f"SSH port [{default_port}]: "
+    entered_port = input(port_prompt).strip()
+    ssh_port = entered_port or default_port
+
+    save_to_env(ssh_host, "SSH_HOST")
+    save_to_env(ssh_port, "SSH_PORT")
+
+    cmd = f"ssh -N -L {app_port}:127.0.0.1:{app_port} {ssh_host} -p {ssh_port}"
+    print("\n=== SSH tunnel for OAuth callback ===")
+    print("Run this on your LOCAL machine before continuing authorization:")
+    print(f"  {cmd}")
+    print(f"Then complete login at: http://127.0.0.1:{app_port}/")
+    print()
+
+
 def _validate_oauth_token_json(oauth_token: str) -> str:
     token_str = (oauth_token or "").strip()
     if not token_str:
@@ -286,6 +313,7 @@ def _add_remote(
     login: str = None,
     pass_key: str = None,
     oauth_token: str | None = None,
+    ssh_mode: bool = False,
 ):
     """Add a new rclone remote or prepare runtime config."""
     remote_type = _detect_remote_type(remote_name)
@@ -306,6 +334,8 @@ def _add_remote(
             if oauth_token:
                 _add_oauth_remote_with_token(remote_name, base_type, oauth_token)
             else:
+                if ssh_mode:
+                    _prompt_ssh_tunnel_for_oauth()
                 _add_simple_remote(remote_name, base_type)
 
         elif remote_type == "local":
@@ -469,6 +499,7 @@ def setup_rclone(
     remote_name: str = None,
     local_backup_path: str = None,
     oauth_token: str | None = None,
+    ssh_mode: bool = False,
 ):
     """Setup rclone remote and folder mapping."""
     if local_backup_path is None:
@@ -478,7 +509,13 @@ def setup_rclone(
         remote_name, login_key, pass_key, base_folder = _remote_user_info(
             remote_name.lower(), local_backup_path, pathlib.Path(PROJECT_ROOT)
         )
-        _add_remote(remote_name.lower(), login_key, pass_key, oauth_token=oauth_token)
+        _add_remote(
+            remote_name.lower(),
+            login_key,
+            pass_key,
+            oauth_token=oauth_token,
+            ssh_mode=ssh_mode,
+        )
         _add_folder(remote_name.lower(), base_folder, local_backup_path)
     else:
         install_rclone("./bin")

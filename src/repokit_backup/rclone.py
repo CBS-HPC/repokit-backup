@@ -13,6 +13,8 @@ from repokit_common import (
     exe_to_path,
     is_installed,
     toml_dataset_path,
+    load_from_env,
+    save_to_env,
 )
 
 try:
@@ -34,6 +36,10 @@ def _rc_verbose_args(level: int) -> list[str]:
 
 def install_rclone(install_path: str = "./bin") -> bool:
     """Download and extract rclone to the specified bin folder."""
+
+    install_root = (PROJECT_ROOT / pathlib.Path(install_path)).resolve()
+    install_root.mkdir(parents=True, exist_ok=True)
+    rclone_config = install_root / "rclone.conf"
 
     def download_rclone(install_path: str = "./bin"):
         os_type = platform.system().lower()
@@ -101,7 +107,19 @@ def install_rclone(install_path: str = "./bin") -> bool:
         if not rclone_dir:
             rclone_dir = str((PROJECT_ROOT / pathlib.Path(install_path)).resolve())
 
-    return exe_to_path("rclone", rclone_dir)
+    if not exe_to_path("rclone", rclone_dir):
+        return False
+
+    # Prefer existing persisted config path; if missing, create and persist a local default.
+    resolved_rclone_config = load_from_env("RCLONE_CONFIG")
+    if not resolved_rclone_config:
+        resolved_rclone_config = str(rclone_config)
+        os.environ["RCLONE_CONFIG"] = resolved_rclone_config
+        save_to_env(resolved_rclone_config, "RCLONE_CONFIG")
+    else:
+        os.environ["RCLONE_CONFIG"] = resolved_rclone_config
+    print(f"rclone:config set to {resolved_rclone_config}")
+    return True
 
 
 def _rclone_transfer(

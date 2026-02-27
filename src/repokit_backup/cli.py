@@ -3,6 +3,7 @@ CLI interface - Argument parsing and command dispatch.
 """
 
 import argparse
+import json
 import pathlib
 import sys
 
@@ -114,7 +115,17 @@ def main():
     add.add_argument(
         "--token",
         dest="oauth_token",
-        help="OAuth token JSON for headless setup (dropbox/onedrive/drive)",
+        help="OAuth token JSON output from `rclone authorize` (dropbox/onedrive/drive)",
+    )
+    add.add_argument(
+        "--token-file",
+        dest="oauth_token_file",
+        help="Path to file containing OAuth token JSON output from `rclone authorize`",
+    )
+    add.add_argument(
+        "--ssh-mode",
+        action="store_true",
+        help="Print SSH tunnel instructions for OAuth remotes (headless setup).",
     )
 
     # Push command
@@ -187,10 +198,31 @@ def main():
 
         # Dispatch commands
         if args.command == "add":
+            oauth_token = getattr(args, "oauth_token", None)
+            oauth_token_file = getattr(args, "oauth_token_file", None)
+
+            if oauth_token and oauth_token_file:
+                print("Error: use only one of --token or --token-file.")
+                sys.exit(2)
+
+            if oauth_token_file:
+                token_path = pathlib.Path(oauth_token_file).expanduser().resolve()
+                if not token_path.exists():
+                    print(f"Error: token file not found: {token_path}")
+                    sys.exit(2)
+                try:
+                    oauth_token = token_path.read_text(encoding="utf-8").strip()
+                    # Validate JSON early for clear CLI feedback.
+                    json.loads(oauth_token)
+                except Exception as e:
+                    print(f"Error: invalid token JSON in {token_path}: {e}")
+                    sys.exit(2)
+
             setup_rclone(
                 remote,
                 local_backup_path=args.local_path,
-                oauth_token=getattr(args, "oauth_token", None),
+                oauth_token=oauth_token,
+                ssh_mode=getattr(args, "ssh_mode", False),
             )
 
         elif args.command == "push":
