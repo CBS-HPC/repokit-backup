@@ -300,7 +300,7 @@ def _prompt_ssh_tunnel_for_oauth(app_port: int = 53682) -> None:
     entered_host = input(host_prompt).strip()
     ssh_host = entered_host or default_host
     if not ssh_host:
-        print("SSH host is required for --ssh-mode.")
+        print("SSH host is required for --ssh.")
         raise ValueError("Missing SSH host")
 
     port_prompt = f"SSH port [{default_port}]: "

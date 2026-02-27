@@ -123,11 +123,12 @@ def main():
         help="Path to file containing OAuth token JSON output from `rclone authorize`",
     )
     add.add_argument(
+        "--ssh",
         "--ssh-mode",
         "--shh-mode",
         dest="ssh_mode",
         action="store_true",
-        help="Print SSH tunnel instructions for OAuth remotes (headless setup).",
+        help="Enable SSH tunnel instructions for OAuth remotes (headless setup).",
     )
 
     # Push command

@@ -52,26 +52,6 @@ Setup a remote:
 repokit-backup add --remote erda
 ```
 
-Setup OAuth remote non-interactively (headless/container):
-
-```bash
-repokit-backup add --remote dropbox --token '<PASTE_TOKEN_JSON>'
-```
-
-Preferred (avoids shell quoting issues with long JSON):
-
-```bash
-repokit-backup add --remote dropbox --token-file ./token.json
-```
-
-`--token` / `--token-file` are supported for OAuth remotes:
-
-- `dropbox`
-- `onedrive`
-- `drive`
-
-For non-OAuth remotes, OAuth token flags are ignored.
-
 Push to remote:
 
 ```bash
@@ -114,6 +94,30 @@ View supported remote types:
 repokit-backup types
 ```
 
+For OAuth remotes (`dropbox`, `onedrive`, `drive`), see:
+
+- `SSH tunnel OAuth mode` (interactive via local browser + SSH tunnel)
+- `Headless OAuth in containers` (token-based, non-interactive)
+
+## SSH tunnel OAuth mode
+
+For remote/headless sessions where you can keep an SSH tunnel open from your local browser machine:
+
+```bash
+repokit-backup add --remote dropbox --ssh
+```
+
+`repokit-backup` will print:
+
+- the SSH tunnel command to run on your local machine
+- instructions to open the exact OAuth callback URL printed by `rclone` (`/auth?state=...`)
+
+Important:
+
+- open the full `/auth?state=...` URL exactly as printed by `rclone`
+- do not open only `http://127.0.0.1:53682/`
+- if tunnel-based callback fails, use `--token-file` as the fallback
+
 ## Headless OAuth in containers
 
 If your runtime cannot open a browser (for example, Ubuntu container/VM), create the token on another machine and pass it with `--token` or `--token-file`.
@@ -139,25 +143,6 @@ repokit-backup add --remote dropbox --token-file ./token.json
 ```
 
 The same flow applies to `onedrive` and `drive` by replacing `"dropbox"` in `rclone authorize`.
-
-## SSH tunnel OAuth mode
-
-For remote/headless sessions where you can keep an SSH tunnel open from your local browser machine:
-
-```bash
-repokit-backup add --remote dropbox --ssh-mode
-```
-
-`repokit-backup` will print:
-
-- the SSH tunnel command to run on your local machine
-- instructions to open the exact OAuth callback URL printed by `rclone` (`/auth?state=...`)
-
-Important:
-
-- open the full `/auth?state=...` URL exactly as printed by `rclone`
-- do not open only `http://127.0.0.1:53682/`
-- if tunnel-based callback fails, use `--token-file` as the fallback
 
 ## License
 
