@@ -23,13 +23,7 @@ Notes:
 
 ## Installation
 
-> Note: `repokit-backup` is not published on PyPI yet. Use local wheel/source installation for now.
-
-Install from PyPI:
-
-```bash
-pip install repokit-backup
-```
+`repokit-backup` is not published on PyPI yet. Use local wheel/source installation.
 
 Install from local wheel files (`/dist`):
 
@@ -126,6 +120,7 @@ repokit-backup add --remote dropbox --ssh
 
 `repokit-backup` will print:
 
+- an `APP_PORT` prompt (default from `.env` key `APP_PORT`, fallback `53682`)
 - the SSH tunnel command to run on your local machine
 - instructions to open the exact OAuth callback URL printed by `rclone` (`/auth?state=...`)
 
