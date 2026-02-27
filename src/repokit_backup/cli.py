@@ -124,6 +124,8 @@ def main():
     )
     add.add_argument(
         "--ssh-mode",
+        "--shh-mode",
+        dest="ssh_mode",
         action="store_true",
         help="Print SSH tunnel instructions for OAuth remotes (headless setup).",
     )

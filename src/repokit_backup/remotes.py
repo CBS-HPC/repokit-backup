@@ -7,6 +7,8 @@ import pathlib
 import subprocess
 import getpass
 import json
+import socket
+import time
 
 from repokit_common import PROJECT_ROOT, load_from_env, save_to_env, check_path_format
 from .auth import set_host_port, setup_ssh_agent_and_add_key
@@ -237,10 +239,55 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
     print(f"Rclone remote '{remote_name}' (lumi) created.")
 
 
-def _add_simple_remote(remote_name: str, base_type: str):
+def _is_port_listening(host: str, port: int, retries: int = 5, delay_s: float = 0.4) -> bool:
+    for _ in range(max(retries, 1)):
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return True
+        except OSError:
+            time.sleep(delay_s)
+    return False
+
+
+def _add_simple_remote(
+    remote_name: str,
+    base_type: str,
+    ssh_mode: bool = False,
+    callback_port: int = 53682,
+):
     print(f"You will need to authorize rclone with {base_type}")
     command = _rclone_cmd("config", "create", remote_name, base_type)
-    subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+    if not ssh_mode:
+        subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+    else:
+        # In ssh-mode, stream output and fail early if callback listener never opens.
+        saw_waiting_for_code = False
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(line.rstrip())
+                if (not saw_waiting_for_code) and ("Waiting for code" in line):
+                    saw_waiting_for_code = True
+                    if not _is_port_listening("127.0.0.1", callback_port):
+                        proc.terminate()
+                        raise RuntimeError(
+                            f"OAuth callback port {callback_port} is not listening on remote host. "
+                            "Check SSH tunnel target, runtime context, or use --token-file."
+                        )
+            rc = proc.wait(timeout=DEFAULT_TIMEOUT)
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+
+        if rc != 0:
+            raise subprocess.CalledProcessError(rc, command)
     print(f"Rclone remote '{remote_name}' created.")
 
 
@@ -323,12 +370,14 @@ def _add_remote(
     try:
         if remote_type == "erda":
             _add_erda_remote(remote_name, login, pass_key)
+            return True
 
         elif remote_type == "ucloud":
-            return
+            return True
 
         elif "lumi" in remote_type:
             _add_lumi_remote(remote_name, login, pass_key)
+            return True
 
         elif remote_type in oauth_remotes:
             if oauth_token:
@@ -336,7 +385,8 @@ def _add_remote(
             else:
                 if ssh_mode:
                     _prompt_ssh_tunnel_for_oauth()
-                _add_simple_remote(remote_name, base_type)
+                _add_simple_remote(remote_name, base_type, ssh_mode=ssh_mode)
+            return True
 
         elif remote_type == "local":
             if oauth_token:
@@ -344,6 +394,7 @@ def _add_remote(
                     "[WARN] --token was provided for a non-OAuth backend ('local'). Ignoring token."
                 )
             _add_simple_remote(remote_name, base_type)
+            return True
 
         else:
             if oauth_token:
@@ -351,9 +402,11 @@ def _add_remote(
                     f"[WARN] --token was provided for backend '{remote_type}' which is not OAuth-based. Ignoring token."
                 )
             _add_interactive_remote(remote_name, base_type)
+            return True
 
     except Exception as e:
         print(f"Failed to add remote '{remote_name}': {e}")
+        return False
 
 
 def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
@@ -509,13 +562,16 @@ def setup_rclone(
         remote_name, login_key, pass_key, base_folder = _remote_user_info(
             remote_name.lower(), local_backup_path, pathlib.Path(PROJECT_ROOT)
         )
-        _add_remote(
+        created = _add_remote(
             remote_name.lower(),
             login_key,
             pass_key,
             oauth_token=oauth_token,
             ssh_mode=ssh_mode,
         )
+        if not created:
+            print(f"Aborting setup for '{remote_name}' because remote creation failed.")
+            return
         _add_folder(remote_name.lower(), base_folder, local_backup_path)
     else:
         install_rclone("./bin")
