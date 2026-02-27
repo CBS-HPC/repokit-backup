@@ -23,9 +23,23 @@ Notes:
 
 ## Installation
 
+Install from PyPI:
+
 ```bash
 pip install repokit-backup
 ```
+
+Install from local wheel files (`/dist`):
+
+```bash
+# 1) Install dependency wheel first
+pip install ../repokit-common/dist/repokit_common-*.whl
+
+# 2) Install repokit-backup wheel
+pip install ./dist/repokit_backup-*.whl
+```
+
+If you are installing into a fresh virtual environment, install in this order so `repokit-common` is available before `repokit-backup`.
 
 ## Requirements
 
