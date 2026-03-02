@@ -487,14 +487,13 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
         valid_choices = {
             "o": "overwrite",
             "s": "merge/sync",
-            "p": "pull-only mapping",
             "n": "change folder",
             "c": "cancel",
         }
         while True:
             choice = (
                 input(
-                    f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Pull-only mapping (p), Change folder (n), Cancel (c)? [o/s/p/n/c]: "
+                    f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Change folder (n), Cancel (c)? [o/s/n/c]: "
                 )
                 .strip()
                 .lower()
@@ -535,11 +534,6 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
                     list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT
                 )
                 continue
-
-            elif choice == "p":
-                print("[INFO] Mapping set to pull-only. Push to this remote will be blocked.")
-                push_policy_default = "pull-only"
-                break
 
             elif choice == "c":
                 print("Cancelled.")

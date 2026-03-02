@@ -444,10 +444,10 @@ def pull_rclone(
 
     if push_policy in {"append-only", "pull-only"} and operation in {"sync", "move"}:
         print(
-            f"Pull blocked for '{remote_name}': policy '{push_policy}' only allows "
-            "operation 'copy' on pull."
+            f"Policy '{push_policy}' only allows pull operation 'copy'. "
+            f"Auto-switching from '{operation}' to 'copy' for '{remote_name}'."
         )
-        return
+        operation = "copy"
 
     if not _remote_path:
         print(

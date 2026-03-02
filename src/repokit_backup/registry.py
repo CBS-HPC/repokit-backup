@@ -132,3 +132,37 @@ def delete_from_registry(remote_name: str, json_path: str = "./bin/rclone_remote
                     print(f"Removed '{remote_name}' entry from {json_path}.")
         except Exception as e:
             print(f"Error updating JSON config: {e}")
+
+
+def set_push_policy(
+    remote_name: str,
+    push_policy: str,
+    json_path: str = "./bin/rclone_remote.json",
+) -> bool:
+    """Update push/pull policy for a registered remote."""
+    valid = {"full", "append-only", "pull-only"}
+    policy = (push_policy or "").strip().lower()
+    if policy not in valid:
+        print(f"Invalid policy '{push_policy}'. Valid values: {', '.join(sorted(valid))}")
+        return False
+
+    if not os.path.exists(json_path):
+        print(f"No rclone registry found at {json_path}")
+        return False
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"Failed to read rclone registry: {e}")
+        return False
+
+    key = (remote_name or "").strip().lower()
+    if key not in data or not isinstance(data[key], dict):
+        print(f"Remote '{remote_name}' not found in registry.")
+        return False
+
+    data[key]["push_policy"] = policy
+    _atomic_write_json(json_path, data)
+    print(f"Updated policy for '{key}' to '{policy}'.")
+    return True

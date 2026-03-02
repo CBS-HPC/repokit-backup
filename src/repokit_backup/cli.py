@@ -27,6 +27,7 @@ from .remotes import (
     set_host_port,
     setup_rclone,
 )
+from .registry import set_push_policy
 
 SUPPORTED_REMOTE_PREFIXES = (
     "dropbox",
@@ -143,6 +144,17 @@ def main():
         help="Optional subpath under the mapped remote root (e.g. /data).",
     )
 
+    # Policy command
+    policy = subparsers.add_parser("policy", help="Update push/pull policy for a configured remote")
+    policy.add_argument("--remote", required=True, help="Remote name")
+    policy.add_argument(
+        "--set",
+        dest="policy_value",
+        required=True,
+        choices=["full", "append-only", "pull-only"],
+        help="Policy value to set",
+    )
+
     # Add command
     add = subparsers.add_parser("add", help="Add a remote and folder mapping")
     add.add_argument("--remote", required=True, help="Remote name")
@@ -241,7 +253,7 @@ def main():
     if hasattr(args, "remote") and args.remote:
         remote = args.remote.strip().lower()
 
-        if args.command in {"add", "push", "pull", "delete", "diff"}:
+        if args.command in {"add", "push", "pull", "delete", "diff", "ls", "policy"}:
             if remote != "all" and not _has_valid_remote_prefix(remote):
                 allowed = ", ".join(SUPPORTED_REMOTE_PREFIXES)
                 print(
@@ -321,6 +333,10 @@ def main():
             generate_diff_report(remote_name=remote)
         elif args.command == "ls":
             list_remote_entries(remote_name=remote, sub_path=getattr(args, "list_path", ""))
+        elif args.command == "policy":
+            ok = set_push_policy(remote_name=remote, push_policy=getattr(args, "policy_value", ""))
+            if not ok:
+                sys.exit(2)
 
     elif args.command == "transfer":
         # Remote-to-remote transfer

@@ -52,6 +52,7 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup diff` | Show remote/local diff report. |
 | `repokit-backup list` | List configured remotes/mappings. |
 | `repokit-backup ls` | List files/folders at a configured remote path. |
+| `repokit-backup policy` | Update policy (`full`, `append-only`, `pull-only`) for a configured remote. |
 | `repokit-backup delete` | Remove a configured remote mapping. |
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
@@ -76,7 +77,6 @@ If the remote folder already exists, the conflict prompt includes:
 
 - overwrite
 - merge/sync
-- pull-only mapping
 - change folder
 - cancel
 
@@ -98,7 +98,7 @@ Pull backup from remote:
 repokit-backup pull --remote dropbox-main
 ```
 
-Note: if remote policy is `append-only` or `pull-only`, `pull --mode` must be `copy`.
+Note: if remote policy is `append-only` or `pull-only`, `pull` auto-switches `sync`/`move` to `copy`.
 
 Interactive file/folder selection for transfer:
 
@@ -121,6 +121,14 @@ List remote entries at mapped root or a subpath:
 ```bash
 repokit-backup ls --remote dropbox-main
 repokit-backup ls --remote dropbox-main --path /data
+```
+
+Update policy for an existing remote:
+
+```bash
+repokit-backup policy --remote dropbox-main --set full
+repokit-backup policy --remote dropbox-main --set append-only
+repokit-backup policy --remote dropbox-main --set pull-only
 ```
 
 View differences before sync:
