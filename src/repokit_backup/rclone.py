@@ -204,6 +204,32 @@ def _rclone_transfer(
         update_sync_status(remote_name, action=action, operation=operation, success=False)
 
 
+def _normalize_select_subpath(select_path: str | None) -> str:
+    path = (select_path or "").strip().replace("\\", "/")
+    if path in {"", ".", "/"}:
+        return ""
+    return path.lstrip("/")
+
+
+def _join_remote_path(base_remote_path: str, sub_path: str) -> str:
+    if not sub_path:
+        return base_remote_path
+    prefix, sep, tail = base_remote_path.partition(":")
+    if sep == "":
+        return base_remote_path
+    tail = tail.rstrip("/")
+    return f"{prefix}:{tail}/{sub_path}" if tail else f"{prefix}:{sub_path}"
+
+
+def _select_source_path(src: str, src_kind: str, select_path: str | None) -> tuple[str, str]:
+    sub_path = _normalize_select_subpath(select_path)
+    if not sub_path:
+        return src, ""
+    if src_kind == "remote":
+        return _join_remote_path(src, sub_path), sub_path
+    return str(pathlib.Path(src) / pathlib.Path(sub_path)), sub_path
+
+
 def _parse_selection_indices(raw: str, max_index: int) -> list[int]:
     selected = set()
     chunks = [part.strip() for part in (raw or "").split(",") if part.strip()]
@@ -262,7 +288,9 @@ def _list_top_level_entries(src: str, src_kind: str, remote_name: str) -> list[s
         return []
 
 
-def _interactive_include_patterns(src: str, src_kind: str, remote_name: str) -> list[str] | None:
+def _interactive_include_patterns(
+    src: str, src_kind: str, remote_name: str, include_prefix: str = ""
+) -> list[str] | None:
     entries = _list_top_level_entries(src, src_kind, remote_name)
     if not entries:
         print("No entries available for interactive selection.")
@@ -284,7 +312,13 @@ def _interactive_include_patterns(src: str, src_kind: str, remote_name: str) -> 
         if not indices:
             print("Invalid selection. Use numbers/ranges like 1,3,5-7.")
             continue
-        patterns = [entries[i - 1].rstrip("/") + "/**" if entries[i - 1].endswith("/") else entries[i - 1] for i in indices]
+        patterns = []
+        for i in indices:
+            entry = entries[i - 1]
+            item_pattern = entry.rstrip("/") + "/**" if entry.endswith("/") else entry
+            if include_prefix:
+                item_pattern = f"{include_prefix.rstrip('/')}/{item_pattern}"
+            patterns.append(item_pattern)
         return patterns
 
 
@@ -308,7 +342,7 @@ def push_rclone(
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
-    select_items: bool = False,
+    select_path: str | None = None,
 ):
     """Push local files to remote."""
     os.chdir(PROJECT_ROOT)
@@ -356,8 +390,11 @@ def push_rclone(
             )
         exclude_patterns = _exclude_patterns(_local_path)
         include_patterns = []
-        if select_items:
-            selected = _interactive_include_patterns(_local_path, "local", remote_name.lower())
+        if select_path is not None:
+            selection_src, include_prefix = _select_source_path(_local_path, "local", select_path)
+            selected = _interactive_include_patterns(
+                selection_src, "local", remote_name.lower(), include_prefix=include_prefix
+            )
             if selected is None:
                 continue
             include_patterns = selected
@@ -382,7 +419,7 @@ def pull_rclone(
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
-    select_items: bool = False,
+    select_path: str | None = None,
 ):
     """Pull files from remote to local."""
     if remote_name is None:
@@ -428,8 +465,11 @@ def pull_rclone(
         _ = rclone_commit(new_path, False, msg=f"Rclone Pull from {_remote_path} to {new_path}")
     exclude_patterns = _exclude_patterns(_local_path)
     include_patterns = []
-    if select_items:
-        selected = _interactive_include_patterns(_remote_path, "remote", remote_name.lower())
+    if select_path is not None:
+        selection_src, include_prefix = _select_source_path(_remote_path, "remote", select_path)
+        selected = _interactive_include_patterns(
+            selection_src, "remote", remote_name.lower(), include_prefix=include_prefix
+        )
         if selected is None:
             return
         include_patterns = selected
@@ -502,6 +542,45 @@ def generate_diff_report(remote_name: str):
             run_diff(remote)
     else:
         run_diff(remote_name)
+
+
+def list_remote_entries(remote_name: str, sub_path: str = ""):
+    """List files/folders at a configured remote mapping (optionally scoped by sub-path)."""
+    remote_name = (remote_name or "").strip().lower()
+    remote_path, _ = load_registry(remote_name)
+    if not remote_path:
+        print(f"No path found for remote '{remote_name}'.")
+        return
+
+    target, _ = _select_source_path(remote_path, "remote", sub_path)
+    cmd = ["rclone", "lsf", target, "--max-depth", "1"]
+
+    if remote_name.startswith("ucloud") or str(target).startswith("ucloud:"):
+        rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+        if rclone_conf.exists():
+            cmd += ["--config", str(rclone_conf)]
+        else:
+            print("[WARN] ucloud rclone config not found in ./bin. Please run set_host_port first.")
+            return
+
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        entries = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        print(f"\nRemote listing for '{remote_name}': {target}")
+        if not entries:
+            print("[Empty]")
+            return
+        for entry in sorted(entries, key=lambda s: (not s.endswith("/"), s.lower())):
+            print(f"  {entry}")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to list remote entries at '{target}': {e}")
 
 
 def transfer_between_remotes(

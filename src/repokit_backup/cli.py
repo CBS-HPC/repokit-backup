@@ -13,6 +13,7 @@ import repokit_common
 from .rclone import (
     generate_diff_report,
     install_rclone,
+    list_remote_entries,
     pull_rclone,
     push_rclone,
     transfer_between_remotes,
@@ -132,6 +133,16 @@ def main():
     # Types command
     subparsers.add_parser("types", help="List supported remote types")
 
+    # List remote entries command
+    ls = subparsers.add_parser("ls", help="List files/folders at a configured remote path")
+    ls.add_argument("--remote", required=True, help="Remote name")
+    ls.add_argument(
+        "--path",
+        dest="list_path",
+        default="",
+        help="Optional subpath under the mapped remote root (e.g. /data).",
+    )
+
     # Add command
     add = subparsers.add_parser("add", help="Add a remote and folder mapping")
     add.add_argument("--remote", required=True, help="Remote name")
@@ -172,8 +183,10 @@ def main():
     push.add_argument("--remote-path", help="remote path to backup")
     push.add_argument(
         "--select",
-        action="store_true",
-        help="Interactively select top-level files/folders to transfer.",
+        nargs="?",
+        const=".",
+        default=None,
+        help="Interactively select files/folders to transfer. Optional subpath scope (e.g. --select /data).",
     )
 
     # Pull command
@@ -193,8 +206,10 @@ def main():
     )
     pull.add_argument(
         "--select",
-        action="store_true",
-        help="Interactively select top-level files/folders to transfer.",
+        nargs="?",
+        const=".",
+        default=None,
+        help="Interactively select files/folders to transfer. Optional subpath scope (e.g. --select /data).",
     )
 
     # Delete command
@@ -285,7 +300,7 @@ def main():
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
-                select_items=getattr(args, "select", False),
+                select_path=getattr(args, "select", None),
             )
 
         elif args.command == "pull":
@@ -296,7 +311,7 @@ def main():
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
-                select_items=getattr(args, "select", False),
+                select_path=getattr(args, "select", None),
             )
 
         elif args.command == "delete":
@@ -304,6 +319,8 @@ def main():
 
         elif args.command == "diff":
             generate_diff_report(remote_name=remote)
+        elif args.command == "ls":
+            list_remote_entries(remote_name=remote, sub_path=getattr(args, "list_path", ""))
 
     elif args.command == "transfer":
         # Remote-to-remote transfer

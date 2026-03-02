@@ -51,6 +51,7 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup pull` | Restore/sync from remote to local project. |
 | `repokit-backup diff` | Show remote/local diff report. |
 | `repokit-backup list` | List configured remotes/mappings. |
+| `repokit-backup ls` | List files/folders at a configured remote path. |
 | `repokit-backup delete` | Remove a configured remote mapping. |
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
@@ -106,7 +107,21 @@ repokit-backup push --remote erda-main --select
 repokit-backup pull --remote erda-main --select
 ```
 
-`--select` opens an interactive top-level picker (number/range syntax like `1,3,5-7`) and transfers only selected entries.
+`--select` opens an interactive picker (number/range syntax like `1,3,5-7`) and transfers only selected entries.
+
+Scope selection to a subpath:
+
+```bash
+repokit-backup push --remote erda-main --select /data
+repokit-backup pull --remote erda-main --select /data
+```
+
+List remote entries at mapped root or a subpath:
+
+```bash
+repokit-backup ls --remote erda-main
+repokit-backup ls --remote erda-main --path /data
+```
 
 View differences before sync:
 
