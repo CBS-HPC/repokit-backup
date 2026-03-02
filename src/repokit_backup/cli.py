@@ -27,6 +27,35 @@ from .remotes import (
     setup_rclone,
 )
 
+SUPPORTED_REMOTE_PREFIXES = (
+    "dropbox",
+    "onedrive",
+    "googledrive",
+    "gdrive",
+    "erda",
+    "ucloud",
+    "lumi",
+    "local",
+    "s3",
+    "sftp",
+)
+
+
+def _has_valid_remote_prefix(remote_name: str) -> bool:
+    """
+    Enforce explicit backend prefix in remote aliases to avoid wrong type inference.
+    Valid examples: dropbox-teamdata, onedrive_proj, sftp-myhost.
+    """
+    name = (remote_name or "").strip().lower()
+    for prefix in SUPPORTED_REMOTE_PREFIXES:
+        if name == prefix:
+            return True
+        if name.startswith(prefix):
+            next_char = name[len(prefix) : len(prefix) + 1]
+            if next_char in {"-", "_", ":"}:
+                return True
+    return False
+
 
 def _ensure_rcloneignore_pyproject_config() -> None:
     """
@@ -141,6 +170,11 @@ def main():
         help="sync: mirror (default), copy: no deletes, move: delete source after",
     )
     push.add_argument("--remote-path", help="remote path to backup")
+    push.add_argument(
+        "--select",
+        action="store_true",
+        help="Interactively select top-level files/folders to transfer.",
+    )
 
     # Pull command
     pull = subparsers.add_parser("pull", help="Pull/restore from remote")
@@ -156,6 +190,11 @@ def main():
         "--local_path",
         dest="local_path",
         help="Override destination path",
+    )
+    pull.add_argument(
+        "--select",
+        action="store_true",
+        help="Interactively select top-level files/folders to transfer.",
     )
 
     # Delete command
@@ -186,6 +225,16 @@ def main():
     # Handle commands
     if hasattr(args, "remote") and args.remote:
         remote = args.remote.strip().lower()
+
+        if args.command in {"add", "push", "pull", "delete", "diff"}:
+            if remote != "all" and not _has_valid_remote_prefix(remote):
+                allowed = ", ".join(SUPPORTED_REMOTE_PREFIXES)
+                print(
+                    "Error: --remote must start with a supported backend prefix "
+                    f"({allowed}) and should use a separator like '-' or '_'."
+                )
+                print("Example: --remote dropbox-teamdata")
+                sys.exit(2)
 
         # Handle LUMI credentials
         if "lumi" in remote:
@@ -236,6 +285,7 @@ def main():
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
+                select_items=getattr(args, "select", False),
             )
 
         elif args.command == "pull":
@@ -246,6 +296,7 @@ def main():
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
+                select_items=getattr(args, "select", False),
             )
 
         elif args.command == "delete":

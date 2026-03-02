@@ -60,13 +60,29 @@ Wheel filenames include version tags and may change over time.
 Setup a remote:
 
 ```bash
-repokit-backup add --remote erda
+repokit-backup add --remote erda-main
 ```
+
+Note: remote aliases must start with a supported backend prefix (for example `dropbox-`, `onedrive-`, `erda-`, `ucloud-`, `sftp-`, `local-`).
+
+During `add`, a persistent push policy is saved per remote:
+
+- `full`: push `sync`, `copy`, and `move` are allowed
+- `append-only`: only push `copy` is allowed
+- `pull-only`: all pushes are blocked
+
+If the remote folder already exists, the conflict prompt includes:
+
+- overwrite
+- merge/sync
+- pull-only mapping
+- change folder
+- cancel
 
 Push to remote:
 
 ```bash
-repokit-backup push --remote erda
+repokit-backup push --remote erda-main
 ```
 
 This command performs the following:
@@ -78,19 +94,28 @@ This command performs the following:
 Pull backup from remote:
 
 ```bash
-repokit-backup pull --remote erda
+repokit-backup pull --remote erda-main
 ```
+
+Interactive file/folder selection for transfer:
+
+```bash
+repokit-backup push --remote erda-main --select
+repokit-backup pull --remote erda-main --select
+```
+
+`--select` opens an interactive top-level picker (number/range syntax like `1,3,5-7`) and transfers only selected entries.
 
 View differences before sync:
 
 ```bash
-repokit-backup diff --remote erda
+repokit-backup diff --remote erda-main
 ```
 
 Remove a remote:
 
 ```bash
-repokit-backup delete --remote erda
+repokit-backup delete --remote erda-main
 ```
 
 List configured remotes and status:
@@ -98,6 +123,8 @@ List configured remotes and status:
 ```bash
 repokit-backup list
 ```
+
+`list` output includes each remote's configured push policy.
 
 View supported remote types:
 

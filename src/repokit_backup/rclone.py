@@ -129,6 +129,7 @@ def _rclone_transfer(
     src_kind: str = "local",
     action: str = "push",
     operation: str = "sync",
+    include_patterns: list[str] = None,
     exclude_patterns: list[str] = None,
     dry_run: bool = False,
     verbose: int = 0,
@@ -148,6 +149,7 @@ def _rclone_transfer(
         verbose: Verbosity level (0-3)
     """
     exclude_patterns = exclude_patterns or []
+    include_patterns = include_patterns or []
     operation = operation.lower().strip()
 
     if operation not in {"sync", "copy", "move"}:
@@ -155,6 +157,10 @@ def _rclone_transfer(
         return
 
     # Build rclone command
+    include_args = []
+    for pattern in include_patterns:
+        include_args.extend(["--include", pattern])
+
     exclude_args = []
     for pattern in exclude_patterns:
         exclude_args.extend(["--exclude", pattern])
@@ -167,7 +173,7 @@ def _rclone_transfer(
         print(f"Error: The folder '{src}' does not exist.")
         return
 
-    command = ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + exclude_args
+    command = ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + include_args + exclude_args
 
     # Use ucloud config if applicable
     if remote_name.lower().startswith("ucloud") or str(src).startswith("ucloud:") or str(
@@ -198,6 +204,90 @@ def _rclone_transfer(
         update_sync_status(remote_name, action=action, operation=operation, success=False)
 
 
+def _parse_selection_indices(raw: str, max_index: int) -> list[int]:
+    selected = set()
+    chunks = [part.strip() for part in (raw or "").split(",") if part.strip()]
+    if not chunks:
+        return []
+    for chunk in chunks:
+        if "-" in chunk:
+            left, right = chunk.split("-", 1)
+            if not left.strip().isdigit() or not right.strip().isdigit():
+                return []
+            start = int(left.strip())
+            end = int(right.strip())
+            if start > end:
+                start, end = end, start
+            if start < 1 or end > max_index:
+                return []
+            selected.update(range(start, end + 1))
+        else:
+            if not chunk.isdigit():
+                return []
+            idx = int(chunk)
+            if idx < 1 or idx > max_index:
+                return []
+            selected.add(idx)
+    return sorted(selected)
+
+
+def _list_top_level_entries(src: str, src_kind: str, remote_name: str) -> list[str]:
+    if src_kind == "local":
+        base = pathlib.Path(src)
+        if not base.exists():
+            return []
+        entries = []
+        for child in sorted(base.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            entries.append(f"{child.name}/" if child.is_dir() else child.name)
+        return entries
+
+    cmd = ["rclone", "lsf", src, "--max-depth", "1"]
+    if remote_name.lower().startswith("ucloud") or str(src).startswith("ucloud:"):
+        rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+        if rclone_conf.exists():
+            cmd += ["--config", str(rclone_conf)]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return sorted(lines, key=lambda s: (not s.endswith("/"), s.lower()))
+    except Exception as e:
+        print(f"Failed to list source entries for interactive selection: {e}")
+        return []
+
+
+def _interactive_include_patterns(src: str, src_kind: str, remote_name: str) -> list[str] | None:
+    entries = _list_top_level_entries(src, src_kind, remote_name)
+    if not entries:
+        print("No entries available for interactive selection.")
+        return []
+
+    print("\nSelect entries to transfer (comma/range format like 1,3,5-7).")
+    print("Press Enter for all entries, or 'c' to cancel this transfer.")
+    for idx, entry in enumerate(entries, start=1):
+        print(f"{idx:>3}) {entry}")
+
+    while True:
+        raw = input("Selection: ").strip()
+        if raw == "":
+            return []
+        if raw.lower() in {"c", "cancel", "q", "quit"}:
+            print("Transfer cancelled by user.")
+            return None
+        indices = _parse_selection_indices(raw, len(entries))
+        if not indices:
+            print("Invalid selection. Use numbers/ranges like 1,3,5-7.")
+            continue
+        patterns = [entries[i - 1].rstrip("/") + "/**" if entries[i - 1].endswith("/") else entries[i - 1] for i in indices]
+        return patterns
+
+
 def _exclude_patterns(local_path: str) -> list[str]:
     """Get exclude patterns from pyproject.toml if applicable."""
     if pathlib.Path(local_path).resolve() == PROJECT_ROOT.resolve():
@@ -218,6 +308,7 @@ def push_rclone(
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
+    select_items: bool = False,
 ):
     """Push local files to remote."""
     os.chdir(PROJECT_ROOT)
@@ -231,8 +322,26 @@ def push_rclone(
         all_remotes = [remote_name]
 
     flag = False
+    registry = load_all_registry()
     for remote_name in all_remotes:
-        _remote_path, _local_path = load_registry(remote_name.lower())
+        remote_key = remote_name.lower()
+        remote_meta = registry.get(remote_key, {})
+        if isinstance(remote_meta, dict):
+            push_policy = str(remote_meta.get("push_policy", "full")).strip().lower()
+        else:
+            push_policy = "full"
+
+        if push_policy == "pull-only":
+            print(f"Skipping '{remote_name}': push policy is pull-only.")
+            continue
+        if push_policy == "append-only" and operation in {"sync", "move"}:
+            print(
+                f"Skipping '{remote_name}': push policy is append-only; "
+                f"operation '{operation}' is not allowed (use copy)."
+            )
+            continue
+
+        _remote_path, _local_path = load_registry(remote_key)
         if not _remote_path:
             print(
                 f"Remote has not been configured or not found in registry. "
@@ -240,21 +349,27 @@ def push_rclone(
             )
             continue
 
-        if new_path is None:
-            new_path = _remote_path
+        target_path = new_path if new_path is not None else _remote_path
         if rclone_commit:
             flag = rclone_commit(
-                _local_path, flag, msg=f"Rclone Push from {_local_path} to {new_path}"
+                _local_path, flag, msg=f"Rclone Push from {_local_path} to {target_path}"
             )
         exclude_patterns = _exclude_patterns(_local_path)
+        include_patterns = []
+        if select_items:
+            selected = _interactive_include_patterns(_local_path, "local", remote_name.lower())
+            if selected is None:
+                continue
+            include_patterns = selected
 
         _rclone_transfer(
-            remote_name=remote_name.lower(),
+            remote_name=remote_key,
             src=_local_path,
-            dst=new_path,
+            dst=target_path,
             src_kind="local",
             action="push",
             operation=operation,
+            include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
             dry_run=dry_run,
             verbose=verbose,
@@ -267,6 +382,7 @@ def pull_rclone(
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
+    select_items: bool = False,
 ):
     """Pull files from remote to local."""
     if remote_name is None:
@@ -298,6 +414,12 @@ def pull_rclone(
     if rclone_commit:
         _ = rclone_commit(new_path, False, msg=f"Rclone Pull from {_remote_path} to {new_path}")
     exclude_patterns = _exclude_patterns(_local_path)
+    include_patterns = []
+    if select_items:
+        selected = _interactive_include_patterns(_remote_path, "remote", remote_name.lower())
+        if selected is None:
+            return
+        include_patterns = selected
 
     _rclone_transfer(
         remote_name=remote_name.lower(),
@@ -306,6 +428,7 @@ def pull_rclone(
         src_kind="remote",
         action="pull",
         operation=operation,
+        include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
         dry_run=dry_run,
         verbose=verbose,
@@ -343,33 +466,6 @@ def rclone_diff_report(local_path: str, remote_path: str):
         cmd += ["--output", temp.name]
         try:
             subprocess.run(cmd, check=True, timeout=DEFAULT_TIMEOUT)
-            with open(temp.name) as f:
-                diff_output = f.read()
-            print(diff_output or "[No differences]")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to generate diff report: {e}")
-
-
-def rclone_diff_report_old(local_path: str, remote_path: str):
-    """Quick diff between local folder and remote path."""
-    import tempfile
-
-    with tempfile.NamedTemporaryFile() as temp:
-        command = [
-            "rclone",
-            "diff",
-            local_path,
-            remote_path,
-            "--no-traverse",
-            "--differ",
-            "--missing-on-dst",
-            "--missing-on-src",
-            "--dry-run",
-            "--output",
-            temp.name,
-        ]
-        try:
-            subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
             with open(temp.name) as f:
                 diff_output = f.read()
             print(diff_output or "[No differences]")

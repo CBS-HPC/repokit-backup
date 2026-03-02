@@ -54,6 +54,7 @@ def save_registry(
     folder_path: str,
     local_backup_path: str,
     remote_type: str,
+    push_policy: str = "full",
     json_path: str = "./bin/rclone_remote.json",
 ):
     """Save remote configuration to registry."""
@@ -70,6 +71,7 @@ def save_registry(
         "remote_path": f"{remote_name}:{folder_path}",
         "local_path": local_backup_path,
         "remote_type": remote_type,
+        "push_policy": push_policy,
         "last_action": None,
         "last_operation": None,
         "timestamp": None,
@@ -79,6 +81,7 @@ def save_registry(
     print(f"Saved rclone path ({folder_path}) for '{remote_name}' to {json_path}")
     print(f"Local backup source: {local_backup_path}")
     print(f"Remote type: {remote_type}")
+    print(f"Push policy: {push_policy}")
 
 
 def load_all_registry(json_path: str = "./bin/rclone_remote.json") -> dict:
