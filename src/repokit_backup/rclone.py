@@ -398,6 +398,19 @@ def pull_rclone(
         return
 
     _remote_path, _local_path = load_registry(remote_name.lower())
+    registry = load_all_registry()
+    remote_meta = registry.get(remote_name.lower(), {})
+    if isinstance(remote_meta, dict):
+        push_policy = str(remote_meta.get("push_policy", "full")).strip().lower()
+    else:
+        push_policy = "full"
+
+    if push_policy in {"append-only", "pull-only"} and operation in {"sync", "move"}:
+        print(
+            f"Pull blocked for '{remote_name}': policy '{push_policy}' only allows "
+            "operation 'copy' on pull."
+        )
+        return
 
     if not _remote_path:
         print(

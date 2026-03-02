@@ -481,7 +481,9 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
     # Check if remote folder exists
     result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
     merge_only = False
-    if result.returncode == 0 and result.stdout.strip():
+    # rclone may return success with empty stdout for existing-but-empty folders.
+    # Treat any successful listing as "folder exists" and ask conflict resolution.
+    if result.returncode == 0:
         valid_choices = {
             "o": "overwrite",
             "s": "merge/sync",

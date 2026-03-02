@@ -67,9 +67,9 @@ Note: remote aliases must start with a supported backend prefix (for example `dr
 
 During `add`, a persistent push policy is saved per remote:
 
-- `full`: push `sync`, `copy`, and `move` are allowed
-- `append-only`: only push `copy` is allowed
-- `pull-only`: all pushes are blocked
+- `full`: push/pull `sync`, `copy`, and `move` are allowed
+- `append-only`: push `copy` only; pull `copy` only
+- `pull-only`: push is blocked; pull `copy` only
 
 If the remote folder already exists, the conflict prompt includes:
 
@@ -96,6 +96,8 @@ Pull backup from remote:
 ```bash
 repokit-backup pull --remote erda-main
 ```
+
+Note: if remote policy is `append-only` or `pull-only`, `pull --mode` must be `copy`.
 
 Interactive file/folder selection for transfer:
 
