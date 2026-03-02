@@ -1,4 +1,4 @@
-﻿# repokit-backup
+# repokit-backup
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/CBS-HPC/repokit-backup/actions/workflows/ci.yml/badge.svg)](https://github.com/CBS-HPC/repokit-backup/actions/workflows/ci.yml)
@@ -61,7 +61,7 @@ Wheel filenames include version tags and may change over time.
 Setup a remote:
 
 ```bash
-repokit-backup add --remote erda-main
+repokit-backup add --remote dropbox-main
 ```
 
 Note: remote aliases must start with a supported backend prefix (for example `dropbox-`, `onedrive-`, `erda-`, `ucloud-`, `sftp-`, `local-`).
@@ -83,7 +83,7 @@ If the remote folder already exists, the conflict prompt includes:
 Push to remote:
 
 ```bash
-repokit-backup push --remote erda-main
+repokit-backup push --remote dropbox-main
 ```
 
 This command performs the following:
@@ -95,7 +95,7 @@ This command performs the following:
 Pull backup from remote:
 
 ```bash
-repokit-backup pull --remote erda-main
+repokit-backup pull --remote dropbox-main
 ```
 
 Note: if remote policy is `append-only` or `pull-only`, `pull --mode` must be `copy`.
@@ -103,8 +103,8 @@ Note: if remote policy is `append-only` or `pull-only`, `pull --mode` must be `c
 Interactive file/folder selection for transfer:
 
 ```bash
-repokit-backup push --remote erda-main --select
-repokit-backup pull --remote erda-main --select
+repokit-backup push --remote dropbox-main --select
+repokit-backup pull --remote dropbox-main --select
 ```
 
 `--select` opens an interactive picker (number/range syntax like `1,3,5-7`) and transfers only selected entries.
@@ -112,27 +112,27 @@ repokit-backup pull --remote erda-main --select
 Scope selection to a subpath:
 
 ```bash
-repokit-backup push --remote erda-main --select /data
-repokit-backup pull --remote erda-main --select /data
+repokit-backup push --remote dropbox-main --select /data
+repokit-backup pull --remote dropbox-main --select /data
 ```
 
 List remote entries at mapped root or a subpath:
 
 ```bash
-repokit-backup ls --remote erda-main
-repokit-backup ls --remote erda-main --path /data
+repokit-backup ls --remote dropbox-main
+repokit-backup ls --remote dropbox-main --path /data
 ```
 
 View differences before sync:
 
 ```bash
-repokit-backup diff --remote erda-main
+repokit-backup diff --remote dropbox-main
 ```
 
 Remove a remote:
 
 ```bash
-repokit-backup delete --remote erda-main
+repokit-backup delete --remote dropbox-main
 ```
 
 List configured remotes and status:
