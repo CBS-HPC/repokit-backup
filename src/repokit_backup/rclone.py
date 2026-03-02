@@ -124,8 +124,9 @@ def install_rclone(install_path: str = "./bin") -> bool:
 
 def _rclone_transfer(
     remote_name: str,
-    local_path: str,
-    remote_path: str,
+    src: str,
+    dst: str,
+    src_kind: str = "local",
     action: str = "push",
     operation: str = "sync",
     exclude_patterns: list[str] = None,
@@ -137,9 +138,10 @@ def _rclone_transfer(
 
     Args:
         remote_name: Name of the configured remote
-        local_path: Local directory path
-        remote_path: Remote directory path
-        action: 'push' or 'pull'
+        src: Source path (local FS path or rclone remote URI)
+        dst: Destination path (local FS path or rclone remote URI)
+        src_kind: 'local' or 'remote' (controls local path checks)
+        action: 'push', 'pull', or 'transfer'
         operation: 'sync', 'copy', or 'move'
         exclude_patterns: List of patterns to exclude
         dry_run: If True, show what would be done
@@ -157,22 +159,20 @@ def _rclone_transfer(
     for pattern in exclude_patterns:
         exclude_args.extend(["--exclude", pattern])
 
-    if action == "push":
-        if not os.path.exists(local_path):
-            print(f"Error: The folder '{local_path}' does not exist.")
-            return
-        src, dst = local_path, remote_path
-    elif action == "pull":
-        src, dst = remote_path, local_path
-    else:
-        print(f"Error: Invalid action '{action}'")
+    if src_kind not in {"local", "remote"}:
+        print(f"Error: Invalid src_kind '{src_kind}'. Must be 'local' or 'remote'.")
+        return
+
+    if src_kind == "local" and not os.path.exists(src):
+        print(f"Error: The folder '{src}' does not exist.")
         return
 
     command = ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + exclude_args
 
     # Use ucloud config if applicable
-    # if remote_path.startswith("ucloud:") or :
-    if remote_name.lower().startswith("ucloud"):
+    if remote_name.lower().startswith("ucloud") or str(src).startswith("ucloud:") or str(
+        dst
+    ).startswith("ucloud:"):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
             command += ["--config", str(rclone_conf)]
@@ -188,10 +188,10 @@ def _rclone_transfer(
         verb = {"sync": "synchronized", "copy": "copied", "move": "moved (deleted at origin)"}.get(
             operation, operation
         )
-        print(f"Folder '{local_path}' successfully {verb} to '{remote_path}'.")
+        print(f"Transfer '{src}' -> '{dst}' successfully {verb}.")
         update_sync_status(remote_name, action=action, operation=operation, success=True)
     except subprocess.CalledProcessError as e:
-        print(f"Failed to {operation} folder to remote: {e}")
+        print(f"Failed to {operation} transfer '{src}' -> '{dst}': {e}")
         update_sync_status(remote_name, action=action, operation=operation, success=False)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
@@ -250,9 +250,10 @@ def push_rclone(
 
         _rclone_transfer(
             remote_name=remote_name.lower(),
+            src=_local_path,
+            dst=new_path,
+            src_kind="local",
             action="push",
-            local_path=_local_path,
-            remote_path=new_path,
             operation=operation,
             exclude_patterns=exclude_patterns,
             dry_run=dry_run,
@@ -300,9 +301,10 @@ def pull_rclone(
 
     _rclone_transfer(
         remote_name=remote_name.lower(),
+        src=_remote_path,
+        dst=new_path,
+        src_kind="remote",
         action="pull",
-        local_path=new_path,
-        remote_path=_remote_path,
         operation=operation,
         exclude_patterns=exclude_patterns,
         dry_run=dry_run,
@@ -444,9 +446,10 @@ def transfer_between_remotes(
 
     _rclone_transfer(
         remote_name=f"{source_remote}->{dest_remote}",
-        action="push",  # push from src to dst
-        local_path=src_path,  # remote path treated as local in rclone syntax
-        remote_path=dst_path,
+        src=src_path,
+        dst=dst_path,
+        src_kind="remote",
+        action="transfer",
         operation=operation,
         exclude_patterns=exclude_patterns,
         dry_run=dry_run,

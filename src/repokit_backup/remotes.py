@@ -547,8 +547,9 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
         print("\nSyncing differences to merge local and remote...")
         _rclone_transfer(
             remote_name=remote_name,
-            local_path=local_backup_path,
-            remote_path=remote_full_path,
+            src=local_backup_path,
+            dst=remote_full_path,
+            src_kind="local",
             action="push",
             operation="copy",
         )  # copy to avoid deleting
