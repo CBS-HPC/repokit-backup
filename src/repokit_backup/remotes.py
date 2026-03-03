@@ -626,6 +626,13 @@ def setup_rclone(
     """Setup rclone remote and folder mapping."""
     if local_backup_path is None:
         local_backup_path = str(PROJECT_ROOT)
+    else:
+        local_path_obj = pathlib.Path(local_backup_path).expanduser()
+        if not local_path_obj.is_absolute():
+            local_path_obj = pathlib.Path(PROJECT_ROOT) / local_path_obj
+        local_path_obj = local_path_obj.resolve()
+        local_path_obj.mkdir(parents=True, exist_ok=True)
+        local_backup_path = str(local_path_obj)
 
     if remote_name:
         remote_name, login_key, pass_key, base_folder = _remote_user_info(

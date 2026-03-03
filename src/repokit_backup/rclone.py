@@ -322,6 +322,54 @@ def _interactive_include_patterns(
         return patterns
 
 
+def _direct_include_pattern(select_path: str | None) -> str:
+    normalized = _normalize_select_subpath(select_path)
+    if not normalized:
+        return ""
+    if normalized.endswith("/"):
+        return f"{normalized.rstrip('/')}/**"
+    return normalized
+
+
+def _select_include_patterns(
+    src: str,
+    src_kind: str,
+    remote_name: str,
+    select_path: str | None,
+) -> list[str] | None:
+    """
+    Resolve include patterns from --select.
+    - --select            -> interactive from root
+    - --select /sub/path  -> interactive from scope if scope is listable
+                            otherwise direct include of that path
+    """
+    if select_path is None:
+        return []
+
+    normalized = _normalize_select_subpath(select_path)
+    selection_src, include_prefix = _select_source_path(src, src_kind, select_path)
+
+    # Root selection remains interactive.
+    if normalized == "":
+        return _interactive_include_patterns(selection_src, src_kind, remote_name, include_prefix="")
+
+    entries = _list_top_level_entries(selection_src, src_kind, remote_name)
+    if entries:
+        return _interactive_include_patterns(
+            selection_src,
+            src_kind,
+            remote_name,
+            include_prefix=include_prefix,
+        )
+
+    # Fallback: treat the provided selection path as a direct include target.
+    pattern = _direct_include_pattern(select_path)
+    if pattern:
+        print(f"Using direct selection pattern: {pattern}")
+        return [pattern]
+    return []
+
+
 def _exclude_patterns(local_path: str) -> list[str]:
     """Get exclude patterns from pyproject.toml if applicable."""
     if pathlib.Path(local_path).resolve() == PROJECT_ROOT.resolve():
@@ -334,6 +382,42 @@ def _exclude_patterns(local_path: str) -> list[str]:
         )
         return exclude_patterns
     return []
+
+
+def _nested_remote_excludes(remote_name: str, local_path: str, registry: dict) -> list[str]:
+    """
+    Build exclude patterns for nested child remotes.
+    If current remote maps to /project and another remote maps to /project/data,
+    then current remote excludes data/** so ownership is delegated to the child.
+    """
+    current_root = pathlib.Path(local_path).resolve()
+    excludes: list[str] = []
+
+    for other_name, meta in (registry or {}).items():
+        if other_name == remote_name:
+            continue
+        if not isinstance(meta, dict):
+            continue
+        other_local = meta.get("local_path")
+        if not other_local:
+            continue
+        other_root = pathlib.Path(str(other_local)).resolve()
+        if other_root == current_root:
+            continue
+
+        try:
+            rel = other_root.relative_to(current_root)
+        except ValueError:
+            continue
+
+        rel_str = str(rel).replace("\\", "/").strip("/")
+        if not rel_str:
+            continue
+        excludes.append(f"{rel_str}/")
+        excludes.append(f"{rel_str}/**")
+
+    # stable and deduplicated
+    return sorted(set(excludes))
 
 
 def push_rclone(
@@ -389,11 +473,15 @@ def push_rclone(
                 _local_path, flag, msg=f"Rclone Push from {_local_path} to {target_path}"
             )
         exclude_patterns = _exclude_patterns(_local_path)
+        exclude_patterns += _nested_remote_excludes(remote_key, _local_path, registry)
+        exclude_patterns = sorted(set(exclude_patterns))
         include_patterns = []
         if select_path is not None:
-            selection_src, include_prefix = _select_source_path(_local_path, "local", select_path)
-            selected = _interactive_include_patterns(
-                selection_src, "local", remote_name.lower(), include_prefix=include_prefix
+            selected = _select_include_patterns(
+                _local_path,
+                "local",
+                remote_name.lower(),
+                select_path,
             )
             if selected is None:
                 continue
@@ -464,15 +552,24 @@ def pull_rclone(
     if rclone_commit:
         _ = rclone_commit(new_path, False, msg=f"Rclone Pull from {_remote_path} to {new_path}")
     exclude_patterns = _exclude_patterns(_local_path)
+    exclude_patterns += _nested_remote_excludes(remote_name.lower(), _local_path, registry)
+    exclude_patterns = sorted(set(exclude_patterns))
     include_patterns = []
     if select_path is not None:
-        selection_src, include_prefix = _select_source_path(_remote_path, "remote", select_path)
-        selected = _interactive_include_patterns(
-            selection_src, "remote", remote_name.lower(), include_prefix=include_prefix
+        selected = _select_include_patterns(
+            _remote_path,
+            "remote",
+            remote_name.lower(),
+            select_path,
         )
         if selected is None:
             return
         include_patterns = selected
+        # Ensure local parent path exists for direct file selections.
+        normalized = _normalize_select_subpath(select_path)
+        if normalized and not normalized.endswith("/"):
+            local_target = pathlib.Path(new_path) / pathlib.Path(normalized)
+            local_target.parent.mkdir(parents=True, exist_ok=True)
 
     _rclone_transfer(
         remote_name=remote_name.lower(),

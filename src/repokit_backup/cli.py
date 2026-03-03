@@ -158,11 +158,22 @@ def main():
     # Add command
     add = subparsers.add_parser("add", help="Add a remote and folder mapping")
     add.add_argument("--remote", required=True, help="Remote name")
-    add.add_argument(
+    add_paths = add.add_mutually_exclusive_group()
+    add_paths.add_argument(
+        "--subdir",
+        dest="project_subdir",
+        help="Project-relative source subdirectory to use/create (e.g. data).",
+    )
+    add_paths.add_argument(
+        "--path",
+        dest="source_path",
+        help="Filesystem source path (absolute or relative to current shell directory).",
+    )
+    add_paths.add_argument(
         "--local-path",
         "--local_path",
-        dest="local_path",
-        help="Specific local path to backup",
+        dest="legacy_local_path",
+        help="Deprecated alias for --path (kept for backward compatibility).",
     )
     add.add_argument(
         "--token",
@@ -211,10 +222,11 @@ def main():
         help="sync: mirror (default), copy: no deletes, move: delete source after",
     )
     pull.add_argument(
+        "--path",
         "--local-path",
         "--local_path",
         dest="local_path",
-        help="Override destination path",
+        help="Override destination path (`--local-path` kept as legacy alias).",
     )
     pull.add_argument(
         "--select",
@@ -245,9 +257,33 @@ def main():
 
     args = parser.parse_args()
 
-    # Normalize shorthand local path to the absolute current working directory.
-    if hasattr(args, "local_path") and args.local_path == ".":
-        args.local_path = str(pathlib.Path.cwd().resolve())
+    # Normalize add source path options.
+    add_local_path = None
+    if getattr(args, "command", None) == "add":
+        project_subdir = getattr(args, "project_subdir", None)
+        source_path = getattr(args, "source_path", None)
+        legacy_local_path = getattr(args, "legacy_local_path", None)
+
+        if legacy_local_path and not source_path:
+            print("[WARN] --local-path is deprecated for add; use --path instead.")
+            source_path = legacy_local_path
+
+        if project_subdir:
+            normalized_subdir = (project_subdir or "").strip().replace("\\", "/")
+            if normalized_subdir.startswith("/"):
+                # Allow convenient /data style input but keep it project-relative.
+                normalized_subdir = normalized_subdir.lstrip("/")
+            project_subdir_path = pathlib.Path(normalized_subdir).expanduser()
+            if project_subdir_path.is_absolute():
+                print("Error: --subdir must be project-relative.")
+                sys.exit(2)
+            resolved_subdir = (pathlib.Path.cwd().resolve() / project_subdir_path).resolve()
+            resolved_subdir.mkdir(parents=True, exist_ok=True)
+            add_local_path = str(resolved_subdir)
+        elif source_path:
+            if source_path == ".":
+                source_path = str(pathlib.Path.cwd().resolve())
+            add_local_path = source_path
 
     # Handle commands
     if hasattr(args, "remote") and args.remote:
@@ -299,7 +335,7 @@ def main():
 
             setup_rclone(
                 remote,
-                local_backup_path=args.local_path,
+                local_backup_path=add_local_path,
                 oauth_token=oauth_token,
                 ssh_mode=getattr(args, "ssh_mode", False),
             )
