@@ -65,6 +65,18 @@ Setup a remote:
 repokit-backup add --remote dropbox-main
 ```
 
+Set source scope during add:
+
+```bash
+# Project-relative source (created if missing)
+repokit-backup add --remote dropbox-main --subdir /data
+
+# Filesystem source path
+repokit-backup add --remote dropbox-main --path /work/shared/data
+```
+
+`--local-path` is still accepted for backward compatibility (alias of `--path` for `add`).
+
 Note: remote aliases must start with a supported backend prefix (for example `dropbox-`, `onedrive-`, `erda-`, `ucloud-`, `sftp-`, `local-`).
 
 During `add`, a persistent push policy is saved per remote:
@@ -114,6 +126,13 @@ Scope selection to a subpath:
 ```bash
 repokit-backup push --remote dropbox-main --select /data
 repokit-backup pull --remote dropbox-main --select /data
+```
+
+Direct path selection also works (non-interactive include fallback):
+
+```bash
+repokit-backup pull --remote dropbox-main --select /data/dataset1/file1.txt
+repokit-backup push --remote dropbox-main --select /data/dataset1/file1.txt
 ```
 
 List remote entries at mapped root or a subpath:
