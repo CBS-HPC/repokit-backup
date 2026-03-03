@@ -4,30 +4,14 @@ CLI interface - Argument parsing and command dispatch.
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
 import repokit_common
+from repokit_common.base import project_root as detect_project_root
 
 # from ..common import ensure_correct_kernel
-from .rclone import (
-    generate_diff_report,
-    install_rclone,
-    list_remote_entries,
-    pull_rclone,
-    push_rclone,
-    transfer_between_remotes,
-)
-from .remotes import (
-    _detect_remote_type,
-    check_lumi_o_credentials,
-    delete_remote,
-    list_remotes,
-    list_supported_remote_types,
-    set_host_port,
-    setup_rclone,
-)
-from .registry import set_push_policy
 
 SUPPORTED_REMOTE_PREFIXES = (
     "dropbox",
@@ -109,8 +93,48 @@ def _ensure_rcloneignore_pyproject_config() -> None:
 # @ensure_correct_kernel
 def main():
     """Main CLI entry point."""
-    # When running standalone, treat the current working directory as the project root.
-    repokit_common.PROJECT_ROOT = pathlib.Path.cwd().resolve()
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument(
+        "--project-root",
+        dest="project_root",
+        help="Explicit project root directory (overrides auto-detection).",
+    )
+    pre_args, _ = pre_parser.parse_known_args()
+
+    if pre_args.project_root:
+        resolved_root = pathlib.Path(pre_args.project_root).expanduser().resolve()
+        if not resolved_root.exists() or not resolved_root.is_dir():
+            print(f"Error: --project-root does not exist or is not a directory: {resolved_root}")
+            sys.exit(2)
+    else:
+        resolved_root = detect_project_root(
+            extra_markers={"bin/rclone_remote.json", "bin/rclone.conf"}
+        )
+
+    os.chdir(resolved_root)
+    repokit_common.PROJECT_ROOT = resolved_root
+
+    # Import after root resolution so modules that read PROJECT_ROOT at import-time
+    # capture the resolved root, not the shell subdirectory.
+    from .rclone import (
+        generate_diff_report,
+        install_rclone,
+        list_remote_entries,
+        pull_rclone,
+        push_rclone,
+        transfer_between_remotes,
+    )
+    from .remotes import (
+        _detect_remote_type,
+        check_lumi_o_credentials,
+        delete_remote,
+        list_remotes,
+        list_supported_remote_types,
+        set_host_port,
+        setup_rclone,
+    )
+    from .registry import set_push_policy
+
     _ensure_rcloneignore_pyproject_config()
 
     if not install_rclone("./bin"):
@@ -126,6 +150,11 @@ def main():
     )
     parser.add_argument(
         "-v", "--verbose", action="count", default=1, help="Increase verbosity (-v, -vv, -vvv)."
+    )
+    parser.add_argument(
+        "--project-root",
+        dest="project_root",
+        help="Explicit project root directory (overrides auto-detection).",
     )
 
     # List command
