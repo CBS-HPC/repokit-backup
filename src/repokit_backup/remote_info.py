@@ -14,7 +14,19 @@ from .remote_types import _detect_remote_type
 def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
     folder = folder.strip().replace("\\", "/").rstrip("/")
     if not folder.endswith(repo):
-        folder = os.path.join(folder, repo).replace("\\", "/")
+        add_suffix = True
+        try:
+            reply = input(
+                f"Add project name suffix '{repo}' to remote folder path? [Y/n]: "
+            ).strip().lower()
+            if reply in {"n", "no"}:
+                add_suffix = False
+        except EOFError:
+            # Non-interactive environment: keep previous default behavior.
+            add_suffix = True
+
+        if add_suffix:
+            folder = os.path.join(folder, repo).replace("\\", "/")
     project_root_normalized = os.path.normpath(str(project_root))
     folder_normalized = os.path.normpath(folder)
     if folder_normalized.startswith(project_root_normalized):
@@ -128,4 +140,3 @@ def _generic_remote_info(remote_name: str, repo_name: str, project_root: pathlib
     base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
     base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
     return remote_name, None, None, base_folder
-
