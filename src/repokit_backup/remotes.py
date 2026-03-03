@@ -487,13 +487,14 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
         valid_choices = {
             "o": "overwrite",
             "s": "merge/sync",
+            "u": "use existing",
             "n": "change folder",
             "c": "cancel",
         }
         while True:
             choice = (
                 input(
-                    f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Change folder (n), Cancel (c)? [o/s/n/c]: "
+                    f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Use existing (u), Change folder (n), Cancel (c)? [o/s/u/n/c]: "
                 )
                 .strip()
                 .lower()
@@ -519,6 +520,10 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
             elif choice == "s":
                 print("[INFO] Will merge/sync differences only.")
                 merge_only = True
+                break
+
+            elif choice == "u":
+                print("[INFO] Using existing remote folder as-is.")
                 break
 
             elif choice == "n":

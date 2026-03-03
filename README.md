@@ -89,6 +89,7 @@ If the remote folder already exists, the conflict prompt includes:
 
 - overwrite
 - merge/sync
+- use existing
 - change folder
 - cancel
 
