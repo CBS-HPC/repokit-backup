@@ -10,37 +10,20 @@ import sys
 
 import repokit_common
 from repokit_common.base import project_root as detect_project_root
+from .remote_types import CANONICAL_BACKENDS, normalize_backend, resolve_backend
 
 # from ..common import ensure_correct_kernel
 
-SUPPORTED_REMOTE_PREFIXES = (
-    "dropbox",
-    "onedrive",
-    "googledrive",
-    "gdrive",
-    "erda",
-    "ucloud",
-    "lumi",
-    "local",
-    "s3",
-    "sftp",
-)
+SUPPORTED_BACKENDS = CANONICAL_BACKENDS
 
 
-def _has_valid_remote_prefix(remote_name: str) -> bool:
-    """
-    Enforce explicit backend prefix in remote aliases to avoid wrong type inference.
-    Valid examples: dropbox-teamdata, onedrive_proj, sftp-myhost.
-    """
-    name = (remote_name or "").strip().lower()
-    for prefix in SUPPORTED_REMOTE_PREFIXES:
-        if name == prefix:
-            return True
-        if name.startswith(prefix):
-            next_char = name[len(prefix) : len(prefix) + 1]
-            if next_char in {"-", "_", ":"}:
-                return True
-    return False
+def _resolved_add_backend(explicit_backend: str | None, remote_alias: str) -> str:
+    backend = resolve_backend(explicit_backend, remote_alias)
+    if not normalize_backend(backend):
+        raise ValueError(
+            f"Unsupported backend '{explicit_backend}'. Supported values: {', '.join(SUPPORTED_BACKENDS)}"
+        )
+    return backend
 
 
 def _ensure_rcloneignore_pyproject_config() -> None:
@@ -125,15 +108,13 @@ def main():
         transfer_between_remotes,
     )
     from .remotes import (
-        _detect_remote_type,
-        check_lumi_o_credentials,
         delete_remote,
         list_remotes,
         list_supported_remote_types,
         set_host_port,
         setup_rclone,
     )
-    from .registry import set_push_policy
+    from .registry import load_all_registry, set_push_policy
 
     _ensure_rcloneignore_pyproject_config()
 
@@ -187,6 +168,13 @@ def main():
     # Add command
     add = subparsers.add_parser("add", help="Add a remote and folder mapping")
     add.add_argument("--remote", required=True, help="Remote name")
+    add.add_argument(
+        "--backend",
+        help=(
+            "Explicit backend type (examples: dropbox, onedrive, lumio/lumi-o, lumip/lumi-p/lumi-f). "
+            "Recommended for lumi aliases or when remote alias does not include backend prefix."
+        ),
+    )
     add_paths = add.add_mutually_exclusive_group()
     add_paths.add_argument(
         "--subdir",
@@ -317,28 +305,28 @@ def main():
     # Handle commands
     if hasattr(args, "remote") and args.remote:
         remote = args.remote.strip().lower()
+        registry = load_all_registry()
 
-        if args.command in {"add", "push", "pull", "delete", "diff", "ls", "policy"}:
-            if remote != "all" and not _has_valid_remote_prefix(remote):
-                allowed = ", ".join(SUPPORTED_REMOTE_PREFIXES)
-                print(
-                    "Error: --remote must start with a supported backend prefix "
-                    f"({allowed}) and should use a separator like '-' or '_'."
-                )
-                print("Example: --remote dropbox-teamdata")
+        add_backend = None
+        if args.command == "add":
+            try:
+                add_backend = _resolved_add_backend(getattr(args, "backend", None), remote)
+            except ValueError as exc:
+                print(f"Error: {exc}")
                 sys.exit(2)
 
-        # Handle LUMI credentials
-        if "lumi" in remote:
-            remote = check_lumi_o_credentials(remote_name=remote, command=args.command)
-            if remote is None:
-                return
+        runtime_backend = None
+        if args.command in {"push", "pull"} and remote != "all":
+            meta = registry.get(remote, {})
+            if isinstance(meta, dict):
+                runtime_backend = normalize_backend(meta.get("remote_type"))
+            runtime_backend = runtime_backend or resolve_backend(None, remote)
 
-        # Set host/port for SFTP remotes
-        if args.command in {"add", "push", "pull"}:
-            remote_type = _detect_remote_type(remote)
-            if remote_type in ["erda", "ucloud"]:
-                set_host_port(remote)
+        # Set host/port for applicable SFTP remotes.
+        if args.command == "add" and add_backend in {"erda", "ucloud"}:
+            set_host_port(remote)
+        if args.command in {"push", "pull"} and runtime_backend in {"erda", "ucloud"}:
+            set_host_port(remote)
 
         # Dispatch commands
         if args.command == "add":
@@ -364,6 +352,7 @@ def main():
 
             setup_rclone(
                 remote,
+                backend=add_backend,
                 local_backup_path=add_local_path,
                 oauth_token=oauth_token,
                 ssh_mode=getattr(args, "ssh_mode", False),

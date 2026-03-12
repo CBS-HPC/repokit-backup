@@ -8,8 +8,6 @@ import pathlib
 
 from repokit_common import check_path_format, load_from_env, save_to_env
 
-from .remote_types import _detect_remote_type
-
 
 def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
     folder = folder.strip().replace("\\", "/").rstrip("/")
@@ -22,7 +20,6 @@ def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> st
             if reply in {"n", "no"}:
                 add_suffix = False
         except EOFError:
-            # Non-interactive environment: keep previous default behavior.
             add_suffix = True
 
         if add_suffix:
@@ -34,72 +31,123 @@ def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> st
     return folder
 
 
-def handle_lumi_o_remote(remote_name: str, repo_name: str, project_root: pathlib.Path) -> tuple[str, str, str, str]:
-    remote_type = "public" if "public" in remote_name.lower() else "private"
-    project_id = load_from_env("LUMI_PROJECT_ID")
-    access_key = load_from_env("LUMI_ACCESS_KEY")
-    secret_key = load_from_env("LUMI_SECRET_KEY")
-    base_folder = load_from_env(f"LUMI_BASE_{remote_type.upper()}")
+def _prompt_non_empty(prompt: str, secret: bool = False, default: str = "") -> str:
+    while True:
+        if secret:
+            value = getpass.getpass(prompt).strip()
+        else:
+            raw = input(prompt).strip()
+            value = raw or default
+        if value:
+            return value
+        print("Value is required.")
 
-    if project_id and access_key and secret_key and base_folder:
-        base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
-        return lumi_o_remote_name(remote_name), base_folder, access_key, secret_key
 
-    default_base = f"rclone-backup/{repo_name}"
-    base_folder = input(f"Enter base folder for LUMI-O ({remote_type}) [{default_base}]: ").strip() or default_base
+def _validate_lumip_base_path(path: str, expected_prefix: str | None = None) -> str:
+    normalized = (path or "").strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError("LUMI-P base path is required.")
+    if not normalized.startswith("/"):
+        raise ValueError("LUMI-P base path must be absolute (start with '/').")
+    if "/../" in f"{normalized}/" or normalized.endswith("/.."):
+        raise ValueError("LUMI-P base path cannot contain '..'.")
+    if expected_prefix and not normalized.startswith(expected_prefix):
+        raise ValueError(
+            f"LUMI-P base path must start with '{expected_prefix}' for selected storage class."
+        )
+    return normalized.rstrip("/") or "/"
+
+
+def _prompt_lumip_storage_root(project_id: str, username: str, default_base: str) -> str:
+    options = [
+        ("1", f"/users/{username}", "home"),
+        ("2", f"/project/{project_id}", "project"),
+        ("3", f"/scratch/{project_id}", "scratch"),
+        ("4", f"/flash/{project_id}", "flash"),
+        ("5", default_base, "custom"),
+    ]
+    print("\nSelect LUMI-P/LUMI-F storage class:")
+    for code, path, label in options:
+        if label == "custom":
+            print(f"{code}) custom absolute path [{path}]")
+        else:
+            print(f"{code}) {label}: {path}")
+
+    while True:
+        choice = input("Choose [1-5] (default 3): ").strip() or "3"
+        if choice not in {code for code, _, _ in options}:
+            print("Invalid choice. Use 1-5.")
+            continue
+
+        if choice == "1":
+            return _validate_lumip_base_path(f"/users/{username}", f"/users/{username}")
+        if choice == "2":
+            return _validate_lumip_base_path(f"/project/{project_id}", f"/project/{project_id}")
+        if choice == "3":
+            return _validate_lumip_base_path(f"/scratch/{project_id}", f"/scratch/{project_id}")
+        if choice == "4":
+            return _validate_lumip_base_path(f"/flash/{project_id}", f"/flash/{project_id}")
+
+        entered = input(f"Enter custom absolute path [{default_base}]: ").strip() or default_base
+        try:
+            return _validate_lumip_base_path(entered)
+        except ValueError as exc:
+            print(f"Invalid path: {exc}")
+
+
+def _lumio_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
+    project_id_default = (load_from_env("LUMIO_PROJECT_ID") or "").strip()
+    access_key_default = (load_from_env("LUMIO_ACCESS_KEY") or "").strip()
+    secret_key_default = (load_from_env("LUMIO_SECRET_KEY") or "").strip()
+    default_base = (load_from_env("LUMIO_DEFAULT_BASE") or f"rclone-backup/{repo_name}").strip()
+
+    if project_id_default:
+        project_id = input(f"LUMI-O project id [{project_id_default}]: ").strip() or project_id_default
+    else:
+        project_id = _prompt_non_empty("LUMI-O project id: ")
+
+    if access_key_default:
+        access_key = input(f"LUMI-O access key [{access_key_default}]: ").strip() or access_key_default
+    else:
+        access_key = _prompt_non_empty("LUMI-O access key: ")
+
+    if secret_key_default:
+        secret_prompt = "LUMI-O secret key [stored]: "
+        secret_key = getpass.getpass(secret_prompt).strip() or secret_key_default
+    else:
+        secret_key = _prompt_non_empty("LUMI-O secret key: ", secret=True)
+
+    base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
     base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
-    print("\nGet your LUMI-O credentials from: https://auth.lumidata.eu")
 
-    project_id = access_key = secret_key = None
-    while not project_id or not access_key or not secret_key:
-        project_id = input("Please enter LUMI project ID (e.g., 465000001): ").strip()
-        access_key = input("Please enter LUMI access key: ").strip()
-        secret_key = getpass.getpass("Please enter LUMI secret key: ").strip()
-        if not project_id or not access_key or not secret_key:
-            print("All three fields (project ID, access key, secret key) are required.\n")
+    save_to_env(project_id, "LUMIO_PROJECT_ID")
+    save_to_env(access_key, "LUMIO_ACCESS_KEY")
+    save_to_env(secret_key, "LUMIO_SECRET_KEY")
+    save_to_env(base_folder, "LUMIO_DEFAULT_BASE")
 
-    save_to_env(project_id, "LUMI_PROJECT_ID")
-    save_to_env(access_key, "LUMI_ACCESS_KEY")
-    save_to_env(secret_key, "LUMI_SECRET_KEY")
-    save_to_env(base_folder, f"LUMI_BASE_{remote_type.upper()}")
-    return lumi_o_remote_name(remote_name), base_folder, access_key, secret_key
+    return remote_name, access_key, secret_key, base_folder
 
 
-def lumi_o_remote_name(remote_name: str) -> str:
-    project_id = load_from_env("LUMI_PROJECT_ID")
-    remote_type = "public" if "public" in remote_name.lower() else "private"
-    return f"lumi-{project_id}-{remote_type}"
+def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
+    project_default = (load_from_env("LUMIP_PROJECT_ID") or "").strip()
+    user_default = (load_from_env("LUMIP_USERNAME") or getpass.getuser()).strip()
+    base_default = (load_from_env("LUMIP_BASE_PATH") or f"/scratch/{project_default or 'PROJECT_ID'}").strip()
 
+    if project_default:
+        project_id = input(f"LUMI project id [{project_default}]: ").strip() or project_default
+    else:
+        project_id = _prompt_non_empty("LUMI project id: ")
 
-def check_lumi_o_credentials(remote_name: str, command: str = "add", repo_name: str = ".cookiecutter", project_root: pathlib.Path | None = None) -> str | None:
-    project_id = load_from_env("LUMI_PROJECT_ID")
-    if project_root is None:
-        project_root = pathlib.Path.cwd().resolve()
-    if not project_id and command == "add":
-        remote_name, _, _, _ = handle_lumi_o_remote(remote_name, repo_name, project_root)
-        return remote_name
-    if not project_id and command != "add":
-        print(f"{remote_name} remote not found. Please set up the remote first by running 'backup add --remote {remote_name}'.")
-        return None
-    if project_id:
-        return lumi_o_remote_name(remote_name)
-    return None
+    username = input(f"LUMI username [{user_default}]: ").strip() or user_default
 
+    base_root = _prompt_lumip_storage_root(project_id, username, base_default)
+    base_folder = ensure_repo_suffix(base_root, repo_name, project_root)
 
-def remote_user_info(remote_name: str, local_backup_path: str, project_root: pathlib.Path):
-    repo_name = pathlib.Path(local_backup_path).name
-    remote_type = _detect_remote_type(remote_name)
-    if "lumi" in remote_type:
-        return _lumi_remote_info(remote_name, repo_name)
-    handlers = {
-        "ucloud": _ucloud_remote_info,
-        "local": _local_remote_info,
-        "dropbox": _oauth_remote_info,
-        "onedrive": _oauth_remote_info,
-        "drive": _oauth_remote_info,
-    }
-    handler = handlers.get(remote_type, _generic_remote_info)
-    return handler(remote_name, repo_name, project_root)
+    save_to_env(project_id, "LUMIP_PROJECT_ID")
+    save_to_env(username, "LUMIP_USERNAME")
+    save_to_env(base_root, "LUMIP_BASE_PATH")
+
+    return remote_name, username, None, base_folder
 
 
 def _ucloud_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
@@ -126,17 +174,29 @@ def _oauth_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
     return remote_name, None, None, base_folder
 
 
-def _lumi_remote_info(remote_name: str, repo_name: str):
-    remote_name = check_lumi_o_credentials(remote_name, command="add", repo_name=repo_name) or remote_name
-    access_key = load_from_env("LUMI_ACCESS_KEY")
-    secret_key = load_from_env("LUMI_SECRET_KEY")
-    remote_type = "public" if "public" in remote_name.lower() else "private"
-    base_folder = load_from_env(f"LUMI_BASE_{remote_type.upper()}") or f"rclone-backup/{repo_name}"
-    return remote_name, access_key, secret_key, base_folder
-
-
 def _generic_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
     default_base = f"rclone-backup/{repo_name}"
     base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
     base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
     return remote_name, None, None, base_folder
+
+
+def remote_user_info(
+    remote_name: str,
+    local_backup_path: str,
+    project_root: pathlib.Path,
+    backend: str,
+):
+    repo_name = pathlib.Path(local_backup_path).name
+    handlers = {
+        "ucloud": _ucloud_remote_info,
+        "local": _local_remote_info,
+        "dropbox": _oauth_remote_info,
+        "onedrive": _oauth_remote_info,
+        "drive": _oauth_remote_info,
+        "lumio": _lumio_remote_info,
+        "lumip": _lumip_remote_info,
+    }
+    handler = handlers.get(backend, _generic_remote_info)
+    return handler(remote_name, repo_name, project_root)
+
