@@ -65,6 +65,14 @@ Setup a remote:
 repokit-backup add --remote dropbox-main
 ```
 
+Explicit backend (recommended when alias does not include a backend-like prefix):
+
+```bash
+repokit-backup add --remote teamdata --backend dropbox
+repokit-backup add --remote lumi-object-prod --backend lumi-o
+repokit-backup add --remote lumi-scratch --backend lumi-p
+```
+
 Set source scope during add:
 
 ```bash
@@ -77,7 +85,15 @@ repokit-backup add --remote dropbox-main --path /work/shared/data
 
 `--local-path` is still accepted for backward compatibility (alias of `--path` for `add`).
 
-Note: remote aliases must start with a supported backend prefix (for example `dropbox-`, `onedrive-`, `erda-`, `ucloud-`, `sftp-`, `local-`).
+`--remote` is an alias/name only. Backend resolution order for `add`:
+1. `--backend` (explicit, preferred)
+2. infer from alias prefix for backward compatibility
+3. fallback to `sftp`
+
+Canonical backend names:
+
+- `lumio` (aliases: `lumio`, `lumi-o`)
+- `lumip` (aliases: `lumip`, `lumi-p`, `lumi-f`)
 
 During `add`, a persistent push policy is saved per remote:
 
@@ -92,6 +108,30 @@ If the remote folder already exists, the conflict prompt includes:
 - use existing
 - change folder
 - cancel
+
+LUMI backend environment keys:
+
+- `lumio`:
+  - `LUMIO_PROJECT_ID`
+  - `LUMIO_ACCESS_KEY`
+  - `LUMIO_SECRET_KEY`
+  - `LUMIO_DEFAULT_BASE`
+- `lumip`:
+  - `LUMIP_PROJECT_ID`
+  - `LUMIP_USERNAME`
+  - `LUMIP_BASE_PATH`
+  - `LUMIP_HOST` (default `lumi.csc.fi`)
+  - `LUMIP_PORT` (default `22`)
+
+`lumip` storage selector presets:
+
+- `/users/<username>`
+- `/project/<project_id>`
+- `/scratch/<project_id>`
+- `/flash/<project_id>`
+- custom absolute path
+
+`lumi-f` is treated as `lumip` with the `/flash/<project_id>` storage option.
 
 Push to remote:
 
