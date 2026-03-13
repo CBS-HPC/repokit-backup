@@ -152,6 +152,7 @@ repokit-backup pull --remote dropbox-main
 ```
 
 Note: if remote policy is `append-only` or `pull-only`, `pull` auto-switches `sync`/`move` to `copy`.
+For unmapped remotes, `pull` requires `--path`; if `--remote-path` is omitted it defaults to the remote root.
 
 Interactive file/folder selection for transfer:
 
@@ -176,12 +177,41 @@ repokit-backup pull --remote dropbox-main --select /data/dataset1/file1.txt
 repokit-backup push --remote dropbox-main --select /data/dataset1/file1.txt
 ```
 
+Non-interactive recursive filtering for transfer:
+
+```bash
+repokit-backup push --remote dropbox-main --search "/data/**/*.parquet"
+repokit-backup pull --remote dropbox-main --path ./restore --search "/data/**/*.parquet"
+repokit-backup pull --remote dropbox-main --remote-path dropbox-main:/archive --path ./restore --search "20250313_*"
+```
+
+`--search` preserves relative folder structure under the transfer root. For example, `/data/**/*.parquet` keeps the `data/...` tree on the destination.
+`--search` and `--select` are mutually exclusive for `push` and `pull`.
+
 List remote entries at mapped root or a subpath:
 
 ```bash
 repokit-backup ls --remote dropbox-main
 repokit-backup ls --remote dropbox-main --path /data
 ```
+
+If a remote has no saved mapping, `ls` falls back to the remote root:
+
+```bash
+repokit-backup ls --remote dropbox-main
+repokit-backup ls --remote dropbox-main --path /data
+```
+
+Recursive search for remote files/folders:
+
+```bash
+repokit-backup ls --remote dropbox-main --search "/data/file_*.txt"
+repokit-backup ls --remote dropbox-main --search "/20250313_*"
+repokit-backup ls --remote dropbox-main --path /data --search "file_*.txt"
+repokit-backup ls --remote dropbox-main --search "/*/file_*.txt"
+```
+
+For `ls --search`, patterns starting with `/` are anchored at remote root. Relative patterns search under the current `--path` or mapped base.
 
 Update policy for an existing remote:
 

@@ -153,6 +153,15 @@ def main():
         default="",
         help="Optional subpath under the mapped remote root (e.g. /data).",
     )
+    ls.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Optional recursive glob search. "
+            "Relative patterns search under --path/current base; leading '/' anchors to remote root."
+        ),
+    )
 
     # Policy command
     policy = subparsers.add_parser("policy", help="Update push/pull policy for a configured remote")
@@ -222,6 +231,15 @@ def main():
     )
     push.add_argument("--remote-path", help="remote path to backup")
     push.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Recursive glob filter for source files. "
+            "Examples: /data/**/*.parquet, data/*.csv, /*/file_*.txt"
+        ),
+    )
+    push.add_argument(
         "--select",
         nargs="?",
         const=".",
@@ -239,11 +257,25 @@ def main():
         help="sync: mirror (default), copy: no deletes, move: delete source after",
     )
     pull.add_argument(
+        "--remote-path",
+        dest="remote_path",
+        help="Override source path on remote when pulling.",
+    )
+    pull.add_argument(
         "--path",
         "--local-path",
         "--local_path",
         dest="local_path",
         help="Override destination path (`--local-path` kept as legacy alias).",
+    )
+    pull.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Recursive glob filter for source files. "
+            "Examples: /data/**/*.parquet, data/*.csv, /*/file_*.txt"
+        ),
     )
     pull.add_argument(
         "--select",
@@ -359,6 +391,9 @@ def main():
             )
 
         elif args.command == "push":
+            if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
+                print("Error: use either --search or --select for push, not both.")
+                sys.exit(2)
             mode = getattr(args, "mode", "sync")
             push_rclone(
                 remote_name=remote,
@@ -367,17 +402,23 @@ def main():
                 dry_run=args.dry_run,
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
+                search_pattern=getattr(args, "search_pattern", None),
             )
 
         elif args.command == "pull":
+            if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
+                print("Error: use either --search or --select for pull, not both.")
+                sys.exit(2)
             mode = getattr(args, "mode", "sync")
             pull_rclone(
                 remote_name=remote,
+                remote_path=args.remote_path,
                 new_path=args.local_path,
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
+                search_pattern=getattr(args, "search_pattern", None),
             )
 
         elif args.command == "delete":
@@ -386,7 +427,11 @@ def main():
         elif args.command == "diff":
             generate_diff_report(remote_name=remote)
         elif args.command == "ls":
-            list_remote_entries(remote_name=remote, sub_path=getattr(args, "list_path", ""))
+            list_remote_entries(
+                remote_name=remote,
+                sub_path=getattr(args, "list_path", ""),
+                search_pattern=getattr(args, "search_pattern", None),
+            )
         elif args.command == "policy":
             ok = set_push_policy(remote_name=remote, push_policy=getattr(args, "policy_value", ""))
             if not ok:
