@@ -20,6 +20,7 @@ Notes:
 - `rclone`is automatically downloaded and installed if not already available
 - Other [Rclone-supported remotes](https://rclone.org/overview/#supported-storage-systems) **should work**, but have not yet been tested with this template's workflow.
 - All configured remotes and folder mappings are logged in `./bin/rclone_remote.json`.
+- Full command and behavior reference: [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md)
 
 ## Installation
 
