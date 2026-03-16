@@ -7,13 +7,19 @@ Backup and synchronization utilities built on rclone. Works with the Research Te
 
 Data loss can compromise months or years of research. To support **reproducible**, **secure**, and **policy-compliant** workflows, this template offers automated backup to storage providers using [`rclone`](https://rclone.org).
 
-Supported backup targets:
+Implemented and supported remote families:
 
-- [**ERDA**](https://erda.dk/)  (SFTP with password + MFA) 
-- [**Dropbox**](https://www.dropbox.com/)  
-- [**OneDrive**](https://onedrive.live.com/)  
-- **Local** storage - backup to a folder on your own system  
-- **Multiple** - select any combination of the above
+- [**ERDA**](https://erda.dk/) via SFTP
+- [**UCloud**](https://www.cloud.sdu.dk/) via SFTP and local `rclone_ucloud.conf`
+- [**Dropbox**](https://www.dropbox.com/) via OAuth
+- [**OneDrive**](https://onedrive.live.com/) via OAuth
+- **Google Drive** via OAuth (`drive`, `googledrive`, `gdrive`)
+- **LUMI-O** object storage via S3-compatible configuration
+- **LUMI-P / LUMI-F** via SFTP-backed storage roots
+- **Local** filesystem targets
+- **Generic SFTP** targets
+- **Generic S3** targets
+- **Multiple remotes** for the same project
 
 Notes:
 
@@ -58,20 +64,21 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
 
-## Examples
+## Quick Start
 
-Setup a remote:
+Common setup examples:
 
 ```bash
 repokit-backup add --remote dropbox-main
-```
-
-Explicit backend (recommended when alias does not include a backend-like prefix):
-
-```bash
-repokit-backup add --remote teamdata --backend dropbox
-repokit-backup add --remote lumi-object-prod --backend lumi-o
+repokit-backup add --remote onedrive-main
+repokit-backup add --remote drive-main
+repokit-backup add --remote erda-main
+repokit-backup add --remote ucloud-main
+repokit-backup add --remote lumi-object --backend lumi-o
 repokit-backup add --remote lumi-scratch --backend lumi-p
+repokit-backup add --remote local-archive --backend local
+repokit-backup add --remote sftp-lab --backend sftp
+repokit-backup add --remote s3-archive --backend s3
 ```
 
 Set source scope during add:
@@ -95,6 +102,8 @@ Canonical backend names:
 
 - `lumio` (aliases: `lumio`, `lumi-o`)
 - `lumip` (aliases: `lumip`, `lumi-p`, `lumi-f`)
+
+Full backend and flag reference: [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md)
 
 During `add`, a persistent push policy is saved per remote:
 
@@ -133,6 +142,8 @@ LUMI backend environment keys:
 - custom absolute path
 
 `lumi-f` is treated as `lumip` with the `/flash/<project_id>` storage option.
+
+## Common Workflows
 
 Push to remote:
 
@@ -189,6 +200,12 @@ repokit-backup pull --remote dropbox-main --remote-path dropbox-main:/archive --
 `--search` preserves relative folder structure under the transfer root. For example, `/data/**/*.parquet` keeps the `data/...` tree on the destination.
 `--search` and `--select` are mutually exclusive for `push` and `pull`.
 
+Transfer between two configured remotes:
+
+```bash
+repokit-backup transfer --source dropbox-main --destination erda-main --mode copy --confirm
+```
+
 List remote entries at mapped root or a subpath:
 
 ```bash
@@ -214,6 +231,21 @@ repokit-backup ls --remote dropbox-main --search "/*/file_*.txt"
 
 For `ls --search`, patterns starting with `/` are anchored at remote root. Relative patterns search under the current `--path` or mapped base.
 
+List configured remotes and status:
+
+```bash
+repokit-backup list
+```
+
+`list` output includes:
+
+- remote alias
+- remote type/backend
+- mapped local and remote paths
+- push policy
+- last action and operation
+- timestamp and status
+
 Update policy for an existing remote:
 
 ```bash
@@ -234,24 +266,30 @@ Remove a remote:
 repokit-backup delete --remote dropbox-main
 ```
 
-List configured remotes and status:
-
-```bash
-repokit-backup list
-```
-
-`list` output includes each remote's configured push policy.
-
 View supported remote types:
 
 ```bash
 repokit-backup types
 ```
 
+## Backend Notes
+
 For OAuth remotes (`dropbox`, `onedrive`, `drive`), see:
 
 - `SSH tunnel OAuth mode` (interactive via local browser + SSH tunnel)
 - `Headless OAuth in containers` (token-based, non-interactive)
+
+For SFTP-style remotes:
+
+- `ERDA` uses prompted host/port/user authentication
+- `UCloud` uses the dedicated local `./bin/rclone_ucloud.conf`
+- `LUMI-P` and `LUMI-F` use SFTP plus a selected storage root
+- generic `sftp` uses interactive `rclone config create`
+
+For object-storage-style remotes:
+
+- `LUMI-O` uses the `https://lumidata.eu` S3-compatible endpoint
+- generic `s3` uses interactive `rclone config create`
 
 ## SSH tunnel OAuth mode
 

@@ -19,6 +19,19 @@ At startup, the CLI:
 - ensures `rclone` is installed and configured locally
 - ensures `pyproject.toml` contains `[tool.rcloneignore]` defaults
 
+Implemented backend families in the current codebase:
+
+- ERDA
+- UCloud
+- Dropbox
+- OneDrive
+- Google Drive
+- LUMI-O
+- LUMI-P / LUMI-F
+- Local filesystem
+- generic SFTP
+- generic S3
+
 ## Command Summary
 
 | Command | Purpose |
@@ -80,6 +93,30 @@ Backend resolution for `add`:
 | `local` | `local` |
 | `s3` | `s3` |
 | `sftp` | `sftp` |
+
+### Backend categories
+
+OAuth-backed:
+
+- `dropbox`
+- `onedrive`
+- `drive`
+
+SFTP-backed:
+
+- `erda`
+- `ucloud`
+- `lumip`
+- `sftp`
+
+Object-storage-backed:
+
+- `lumio`
+- `s3`
+
+Filesystem-backed:
+
+- `local`
 
 ### Backend-specific environment keys
 
@@ -184,6 +221,16 @@ Behavior:
   - change folder
   - cancel
 
+Backend-specific setup behavior:
+
+- `dropbox`, `onedrive`, `drive`: OAuth flow, token flow, or SSH-tunneled OAuth
+- `erda`: SFTP configuration with prompted credentials or agent use
+- `ucloud`: SFTP-like mapping plus separate local `rclone_ucloud.conf`
+- `lumio`: prompts for project id, access key, secret key, and default base folder
+- `lumip`: prompts for project id, username, and storage class/root
+- `local`: prompts for a local target path
+- `sftp`, `s3`: falls back to interactive `rclone config create`
+
 Notes:
 
 - `--subdir` is relative to the detected project root
@@ -209,6 +256,7 @@ Behavior:
 - uses the mapped remote path unless `--remote-path` is given
 - reads ignore patterns from `[tool.rcloneignore]` if the local source is the project root
 - excludes nested child mappings automatically
+- commits through `repokit.vcs.rclone_commit` when that integration is available
 
 Search/filter rules:
 
@@ -245,6 +293,8 @@ Unmapped remote behavior:
 
 - `--path` is required
 - if `--remote-path` is omitted, source defaults to remote root `<remote>:`
+
+This makes ad hoc restore possible even before a persistent mapping has been created.
 
 Search/filter rules:
 
@@ -293,6 +343,12 @@ repokit-backup ls --remote dropbox-main --search "/*/file_*.txt"
 
 Prints configured remotes, saved mappings, last action, last operation, timestamp, status, and policy.
 
+It combines:
+
+- remotes known by rclone
+- remotes known in `./bin/rclone_remote.json`
+- warning markers when a registry entry no longer exists in the active rclone config
+
 ### `policy`
 
 Updates the saved policy for an existing mapped remote.
@@ -325,6 +381,11 @@ Behavior:
 - removes rclone config entry
 - removes registry entry
 - deletes empty config file when applicable
+
+Special handling:
+
+- supports `--remote all`
+- also checks the dedicated UCloud config file when cleaning up
 
 ### `transfer`
 
@@ -408,6 +469,12 @@ In `--ssh` mode, the CLI prompts for:
 
 Then it prints a local SSH tunnel command and expects the exact `/auth?state=...` callback URL to be opened in a local browser.
 
+This applies to:
+
+- Dropbox
+- OneDrive
+- Google Drive
+
 ## Registry File
 
 Path:
@@ -441,6 +508,9 @@ Schema example:
 - nested child mappings are excluded from parent pushes/pulls
 - root-level ignore patterns come from `[tool.rcloneignore]`
 - LUMI-P custom paths must be absolute and must not contain `..`
+- `append-only` blocks destructive push modes
+- `pull-only` blocks push entirely
+- `--search` and `--select` are currently mutually exclusive for `push` and `pull`
 
 ## Examples
 
@@ -473,4 +543,3 @@ repokit-backup pull --remote dropbox-main --remote-path dropbox-main:/archive --
 ```bash
 repokit-backup ls --remote dropbox-main --search "/20250313_*"
 ```
-
