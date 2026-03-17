@@ -6,16 +6,8 @@ import zipfile
 import glob
 import requests
 
-
-from repokit_common import (
-    PROJECT_ROOT,
-    toml_ignore,
-    exe_to_path,
-    is_installed,
-    toml_dataset_path,
-    load_from_env,
-    save_to_env,
-)
+import repokit_common
+from repokit_common import toml_ignore, exe_to_path, is_installed, toml_dataset_path, load_from_env, save_to_env
 
 try:
     from repokit.vcs import rclone_commit
@@ -29,6 +21,10 @@ DEFAULT_TIMEOUT = 600  # seconds
 DEFAULT_DATASET_PATH, _ = toml_dataset_path()
 
 
+def _project_root() -> pathlib.Path:
+    return pathlib.Path(repokit_common.PROJECT_ROOT).resolve()
+
+
 def _rc_verbose_args(level: int) -> list[str]:
     """Convert verbosity level to rclone args."""
     return ["-" + "v" * min(max(level, 0), 3)] if level > 0 else []
@@ -37,7 +33,8 @@ def _rc_verbose_args(level: int) -> list[str]:
 def install_rclone(install_path: str = "./bin") -> bool:
     """Download and extract rclone to the specified bin folder."""
 
-    install_root = (PROJECT_ROOT / pathlib.Path(install_path)).resolve()
+    project_root = _project_root()
+    install_root = (project_root / pathlib.Path(install_path)).resolve()
     install_root.mkdir(parents=True, exist_ok=True)
     rclone_config = install_root / "rclone.conf"
 
@@ -60,7 +57,7 @@ def install_rclone(install_path: str = "./bin") -> bool:
             return None
 
         # Create the bin folder if it doesn't exist
-        install_path = str(PROJECT_ROOT / pathlib.Path(install_path))
+        install_path = str(project_root / pathlib.Path(install_path))
         os.makedirs(install_path, exist_ok=True)
 
         # Download rclone
@@ -105,7 +102,7 @@ def install_rclone(install_path: str = "./bin") -> bool:
         # Even when already installed, ensure process PATH includes the resolved local dir.
         rclone_dir = os.environ.get("RCLONE")
         if not rclone_dir:
-            rclone_dir = str((PROJECT_ROOT / pathlib.Path(install_path)).resolve())
+            rclone_dir = str((_project_root() / pathlib.Path(install_path)).resolve())
 
     if not exe_to_path("rclone", rclone_dir):
         return False
@@ -394,7 +391,7 @@ def _select_include_patterns(
 
 def _exclude_patterns(local_path: str) -> list[str]:
     """Get exclude patterns from pyproject.toml if applicable."""
-    if pathlib.Path(local_path).resolve() == PROJECT_ROOT.resolve():
+    if pathlib.Path(local_path).resolve() == _project_root():
         _, exclude_patterns = toml_ignore(
             folder=local_path,
             toml_path="pyproject.toml",
@@ -452,7 +449,7 @@ def push_rclone(
     search_pattern: str | None = None,
 ):
     """Push local files to remote."""
-    os.chdir(PROJECT_ROOT)
+    os.chdir(_project_root())
 
     if not install_rclone("./bin"):
         return
@@ -542,7 +539,7 @@ def pull_rclone(
         print("Error: Pulling from 'all' remotes is not supported.")
         return
 
-    os.chdir(PROJECT_ROOT)
+    os.chdir(_project_root())
 
     if not install_rclone("./bin"):
         return

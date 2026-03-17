@@ -9,7 +9,7 @@ def test_setup_rclone_skips_add_folder_when_mapping_is_skipped(
     monkeypatch,
     tmp_path: pathlib.Path,
 ):
-    monkeypatch.setattr(remotes, "PROJECT_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(remotes.repokit_common, "PROJECT_ROOT", tmp_path.resolve())
     monkeypatch.setattr(
         remotes,
         "_remote_user_info",

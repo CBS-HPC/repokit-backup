@@ -8,7 +8,8 @@ import json
 import socket
 import time
 
-from repokit_common import PROJECT_ROOT, load_from_env, save_to_env
+import repokit_common
+from repokit_common import load_from_env, save_to_env
 from .auth import set_host_port as _set_host_port
 from .remote_types import get_base_remote_type
 from .remote_info import (
@@ -37,6 +38,10 @@ def set_host_port(remote_name: str):
 def _ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
     """Compatibility wrapper exported from remotes module."""
     return _ensure_repo_suffix_impl(folder, repo, project_root)
+
+
+def _project_root() -> pathlib.Path:
+    return pathlib.Path(repokit_common.PROJECT_ROOT).resolve()
 
 
 def check_rclone_remote(remote_name: str) -> bool:
@@ -666,11 +671,11 @@ def setup_rclone(
 ):
     """Setup rclone remote and folder mapping."""
     if local_backup_path is None:
-        local_backup_path = str(PROJECT_ROOT)
+        local_backup_path = str(_project_root())
     else:
         local_path_obj = pathlib.Path(local_backup_path).expanduser()
         if not local_path_obj.is_absolute():
-            local_path_obj = pathlib.Path(PROJECT_ROOT) / local_path_obj
+            local_path_obj = _project_root() / local_path_obj
         local_path_obj = local_path_obj.resolve()
         local_path_obj.mkdir(parents=True, exist_ok=True)
         local_backup_path = str(local_path_obj)
@@ -679,7 +684,7 @@ def setup_rclone(
         remote_name, login_key, pass_key, base_folder = _remote_user_info(
             remote_name.lower(),
             local_backup_path,
-            pathlib.Path(PROJECT_ROOT),
+            _project_root(),
             backend=backend or "sftp",
         )
         created = _add_remote(
