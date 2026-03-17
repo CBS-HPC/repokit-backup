@@ -10,37 +10,25 @@ import sys
 
 import repokit_common
 from repokit_common.base import project_root as detect_project_root
+from .remote_types import CANONICAL_BACKENDS, normalize_backend, resolve_backend
 
 # from ..common import ensure_correct_kernel
 
-SUPPORTED_REMOTE_PREFIXES = (
-    "dropbox",
-    "onedrive",
-    "googledrive",
-    "gdrive",
-    "erda",
-    "ucloud",
-    "lumi",
-    "local",
-    "s3",
-    "sftp",
-)
+SUPPORTED_BACKENDS = CANONICAL_BACKENDS
 
 
-def _has_valid_remote_prefix(remote_name: str) -> bool:
-    """
-    Enforce explicit backend prefix in remote aliases to avoid wrong type inference.
-    Valid examples: dropbox-teamdata, onedrive_proj, sftp-myhost.
-    """
-    name = (remote_name or "").strip().lower()
-    for prefix in SUPPORTED_REMOTE_PREFIXES:
-        if name == prefix:
-            return True
-        if name.startswith(prefix):
-            next_char = name[len(prefix) : len(prefix) + 1]
-            if next_char in {"-", "_", ":"}:
-                return True
-    return False
+def _resolved_add_backend(explicit_backend: str | None, _remote_alias: str) -> str:
+    if not explicit_backend:
+        raise ValueError(
+            "--backend is required for `repokit-backup add`. "
+            f"Supported values: {', '.join(SUPPORTED_BACKENDS)}"
+        )
+    backend = normalize_backend(explicit_backend)
+    if not backend:
+        raise ValueError(
+            f"Unsupported backend '{explicit_backend}'. Supported values: {', '.join(SUPPORTED_BACKENDS)}"
+        )
+    return backend
 
 
 def _ensure_rcloneignore_pyproject_config() -> None:
@@ -125,15 +113,13 @@ def main():
         transfer_between_remotes,
     )
     from .remotes import (
-        _detect_remote_type,
-        check_lumi_o_credentials,
         delete_remote,
         list_remotes,
         list_supported_remote_types,
         set_host_port,
         setup_rclone,
     )
-    from .registry import set_push_policy
+    from .registry import load_all_registry, set_push_policy
 
     _ensure_rcloneignore_pyproject_config()
 
@@ -172,6 +158,15 @@ def main():
         default="",
         help="Optional subpath under the mapped remote root (e.g. /data).",
     )
+    ls.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Optional recursive glob search. "
+            "Relative patterns search under --path/current base; leading '/' anchors to remote root."
+        ),
+    )
 
     # Policy command
     policy = subparsers.add_parser("policy", help="Update push/pull policy for a configured remote")
@@ -187,6 +182,14 @@ def main():
     # Add command
     add = subparsers.add_parser("add", help="Add a remote and folder mapping")
     add.add_argument("--remote", required=True, help="Remote name")
+    add.add_argument(
+        "--backend",
+        required=True,
+        help=(
+            "Backend type for the remote being created "
+            "(examples: dropbox, onedrive, drive, erda, ucloud, lumio/lumi-o, lumip/lumi-p/lumi-f, local, s3, sftp)."
+        ),
+    )
     add_paths = add.add_mutually_exclusive_group()
     add_paths.add_argument(
         "--subdir",
@@ -234,6 +237,15 @@ def main():
     )
     push.add_argument("--remote-path", help="remote path to backup")
     push.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Recursive glob filter for source files. "
+            "Examples: /data/**/*.parquet, data/*.csv, /*/file_*.txt"
+        ),
+    )
+    push.add_argument(
         "--select",
         nargs="?",
         const=".",
@@ -251,11 +263,25 @@ def main():
         help="sync: mirror (default), copy: no deletes, move: delete source after",
     )
     pull.add_argument(
+        "--remote-path",
+        dest="remote_path",
+        help="Override source path on remote when pulling.",
+    )
+    pull.add_argument(
         "--path",
         "--local-path",
         "--local_path",
         dest="local_path",
         help="Override destination path (`--local-path` kept as legacy alias).",
+    )
+    pull.add_argument(
+        "--search",
+        dest="search_pattern",
+        default=None,
+        help=(
+            "Recursive glob filter for source files. "
+            "Examples: /data/**/*.parquet, data/*.csv, /*/file_*.txt"
+        ),
     )
     pull.add_argument(
         "--select",
@@ -317,28 +343,28 @@ def main():
     # Handle commands
     if hasattr(args, "remote") and args.remote:
         remote = args.remote.strip().lower()
+        registry = load_all_registry()
 
-        if args.command in {"add", "push", "pull", "delete", "diff", "ls", "policy"}:
-            if remote != "all" and not _has_valid_remote_prefix(remote):
-                allowed = ", ".join(SUPPORTED_REMOTE_PREFIXES)
-                print(
-                    "Error: --remote must start with a supported backend prefix "
-                    f"({allowed}) and should use a separator like '-' or '_'."
-                )
-                print("Example: --remote dropbox-teamdata")
+        add_backend = None
+        if args.command == "add":
+            try:
+                add_backend = _resolved_add_backend(getattr(args, "backend", None), remote)
+            except ValueError as exc:
+                print(f"Error: {exc}")
                 sys.exit(2)
 
-        # Handle LUMI credentials
-        if "lumi" in remote:
-            remote = check_lumi_o_credentials(remote_name=remote, command=args.command)
-            if remote is None:
-                return
+        runtime_backend = None
+        if args.command in {"push", "pull"} and remote != "all":
+            meta = registry.get(remote, {})
+            if isinstance(meta, dict):
+                runtime_backend = normalize_backend(meta.get("remote_type"))
+            runtime_backend = runtime_backend or resolve_backend(None, remote)
 
-        # Set host/port for SFTP remotes
-        if args.command in {"add", "push", "pull"}:
-            remote_type = _detect_remote_type(remote)
-            if remote_type in ["erda", "ucloud"]:
-                set_host_port(remote)
+        # Set host/port for applicable SFTP remotes.
+        if args.command == "add" and add_backend in {"erda", "ucloud"}:
+            set_host_port(remote)
+        if args.command in {"push", "pull"} and runtime_backend in {"erda", "ucloud"}:
+            set_host_port(remote)
 
         # Dispatch commands
         if args.command == "add":
@@ -364,12 +390,16 @@ def main():
 
             setup_rclone(
                 remote,
+                backend=add_backend,
                 local_backup_path=add_local_path,
                 oauth_token=oauth_token,
                 ssh_mode=getattr(args, "ssh_mode", False),
             )
 
         elif args.command == "push":
+            if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
+                print("Error: use either --search or --select for push, not both.")
+                sys.exit(2)
             mode = getattr(args, "mode", "sync")
             push_rclone(
                 remote_name=remote,
@@ -378,17 +408,23 @@ def main():
                 dry_run=args.dry_run,
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
+                search_pattern=getattr(args, "search_pattern", None),
             )
 
         elif args.command == "pull":
+            if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
+                print("Error: use either --search or --select for pull, not both.")
+                sys.exit(2)
             mode = getattr(args, "mode", "sync")
             pull_rclone(
                 remote_name=remote,
+                remote_path=args.remote_path,
                 new_path=args.local_path,
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
+                search_pattern=getattr(args, "search_pattern", None),
             )
 
         elif args.command == "delete":
@@ -397,7 +433,11 @@ def main():
         elif args.command == "diff":
             generate_diff_report(remote_name=remote)
         elif args.command == "ls":
-            list_remote_entries(remote_name=remote, sub_path=getattr(args, "list_path", ""))
+            list_remote_entries(
+                remote_name=remote,
+                sub_path=getattr(args, "list_path", ""),
+                search_pattern=getattr(args, "search_pattern", None),
+            )
         elif args.command == "policy":
             ok = set_push_policy(remote_name=remote, push_policy=getattr(args, "policy_value", ""))
             if not ok:

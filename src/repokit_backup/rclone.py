@@ -221,6 +221,28 @@ def _join_remote_path(base_remote_path: str, sub_path: str) -> str:
     return f"{prefix}:{tail}/{sub_path}" if tail else f"{prefix}:{sub_path}"
 
 
+def _remote_root(remote_name: str) -> str:
+    return f"{(remote_name or '').strip().lower()}:"
+
+
+def _normalize_search_pattern(search_pattern: str | None) -> tuple[str | None, bool]:
+    pattern = (search_pattern or "").strip().replace("\\", "/")
+    if not pattern:
+        return None, False
+    anchored_to_root = pattern.startswith("/")
+    normalized = pattern.lstrip("/")
+    return normalized or None, anchored_to_root
+
+
+def _search_include_patterns(search_pattern: str | None) -> list[str]:
+    normalized, _ = _normalize_search_pattern(search_pattern)
+    if not normalized:
+        return []
+    if normalized.endswith("/"):
+        return [f"{normalized.rstrip('/')}/**"]
+    return [normalized]
+
+
 def _select_source_path(src: str, src_kind: str, select_path: str | None) -> tuple[str, str]:
     sub_path = _normalize_select_subpath(select_path)
     if not sub_path:
@@ -427,6 +449,7 @@ def push_rclone(
     dry_run: bool = False,
     verbose: int = 0,
     select_path: str | None = None,
+    search_pattern: str | None = None,
 ):
     """Push local files to remote."""
     os.chdir(PROJECT_ROOT)
@@ -475,7 +498,7 @@ def push_rclone(
         exclude_patterns = _exclude_patterns(_local_path)
         exclude_patterns += _nested_remote_excludes(remote_key, _local_path, registry)
         exclude_patterns = sorted(set(exclude_patterns))
-        include_patterns = []
+        include_patterns = _search_include_patterns(search_pattern)
         if select_path is not None:
             selected = _select_include_patterns(
                 _local_path,
@@ -503,11 +526,13 @@ def push_rclone(
 
 def pull_rclone(
     remote_name: str,
+    remote_path: str = None,
     new_path: str = None,
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
     select_path: str | None = None,
+    search_pattern: str | None = None,
 ):
     """Pull files from remote to local."""
     if remote_name is None:
@@ -537,27 +562,48 @@ def pull_rclone(
         )
         operation = "copy"
 
-    if not _remote_path:
-        print(
-            f"Remote has not been configured or not found in registry. "
-            f"Run 'backup add --remote {remote_name}' first."
-        )
+    has_mapping = bool(_remote_path and _local_path)
+    effective_remote_path = remote_path or _remote_path
+    effective_local_path = new_path or _local_path
+
+    if not has_mapping:
+        if not new_path:
+            print(
+                f"Remote '{remote_name}' has no saved mapping. "
+                "Provide --path for pull destination."
+            )
+            return
+        if not remote_path:
+            effective_remote_path = f"{remote_name.lower()}:"
+            print(
+                f"Remote '{remote_name}' has no saved mapping. "
+                f"Defaulting pull source to remote root '{effective_remote_path}'."
+            )
+
+    if not effective_remote_path:
+        print(f"Error: No remote source path resolved for '{remote_name}'.")
+        return
+    if not effective_local_path:
+        print(f"Error: No local destination path resolved for '{remote_name}'.")
         return
 
-    if new_path is None:
-        new_path = _local_path
-
-    if not os.path.exists(new_path):
-        os.makedirs(new_path)
+    if not os.path.exists(effective_local_path):
+        os.makedirs(effective_local_path)
     if rclone_commit:
-        _ = rclone_commit(new_path, False, msg=f"Rclone Pull from {_remote_path} to {new_path}")
-    exclude_patterns = _exclude_patterns(_local_path)
-    exclude_patterns += _nested_remote_excludes(remote_name.lower(), _local_path, registry)
+        _ = rclone_commit(
+            effective_local_path,
+            False,
+            msg=f"Rclone Pull from {effective_remote_path} to {effective_local_path}",
+        )
+    exclude_patterns = []
+    if _local_path:
+        exclude_patterns = _exclude_patterns(_local_path)
+        exclude_patterns += _nested_remote_excludes(remote_name.lower(), _local_path, registry)
     exclude_patterns = sorted(set(exclude_patterns))
-    include_patterns = []
+    include_patterns = _search_include_patterns(search_pattern)
     if select_path is not None:
         selected = _select_include_patterns(
-            _remote_path,
+            effective_remote_path,
             "remote",
             remote_name.lower(),
             select_path,
@@ -568,13 +614,13 @@ def pull_rclone(
         # Ensure local parent path exists for direct file selections.
         normalized = _normalize_select_subpath(select_path)
         if normalized and not normalized.endswith("/"):
-            local_target = pathlib.Path(new_path) / pathlib.Path(normalized)
+            local_target = pathlib.Path(effective_local_path) / pathlib.Path(normalized)
             local_target.parent.mkdir(parents=True, exist_ok=True)
 
     _rclone_transfer(
         remote_name=remote_name.lower(),
-        src=_remote_path,
-        dst=new_path,
+        src=effective_remote_path,
+        dst=effective_local_path,
         src_kind="remote",
         action="pull",
         operation=operation,
@@ -641,16 +687,28 @@ def generate_diff_report(remote_name: str):
         run_diff(remote_name)
 
 
-def list_remote_entries(remote_name: str, sub_path: str = ""):
-    """List files/folders at a configured remote mapping (optionally scoped by sub-path)."""
+def list_remote_entries(
+    remote_name: str,
+    sub_path: str = "",
+    search_pattern: str | None = None,
+):
+    """
+    List files/folders for a remote.
+    Uses configured mapping when present; otherwise defaults to remote root.
+    """
     remote_name = (remote_name or "").strip().lower()
     remote_path, _ = load_registry(remote_name)
+    base_remote = remote_path if remote_path else _remote_root(remote_name)
     if not remote_path:
-        print(f"No path found for remote '{remote_name}'.")
-        return
+        print(f"No mapped path for '{remote_name}'. Listing remote root.")
 
-    target, _ = _select_source_path(remote_path, "remote", sub_path)
-    cmd = ["rclone", "lsf", target, "--max-depth", "1"]
+    target, _ = _select_source_path(base_remote, "remote", sub_path)
+    normalized_search, anchored_to_root = _normalize_search_pattern(search_pattern)
+    if normalized_search:
+        target = _remote_root(remote_name) if anchored_to_root else target
+        cmd = ["rclone", "lsf", target, "--recursive", "--include", normalized_search]
+    else:
+        cmd = ["rclone", "lsf", target, "--max-depth", "1"]
 
     if remote_name.startswith("ucloud") or str(target).startswith("ucloud:"):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
@@ -670,14 +728,18 @@ def list_remote_entries(remote_name: str, sub_path: str = ""):
             timeout=DEFAULT_TIMEOUT,
         )
         entries = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        print(f"\nRemote listing for '{remote_name}': {target}")
+        if normalized_search:
+            print(f"\nRemote search for '{remote_name}': {target} | pattern={normalized_search}")
+        else:
+            print(f"\nRemote listing for '{remote_name}': {target}")
         if not entries:
-            print("[Empty]")
+            print("[No matches]" if normalized_search else "[Empty]")
             return
         for entry in sorted(entries, key=lambda s: (not s.endswith("/"), s.lower())):
             print(f"  {entry}")
     except subprocess.CalledProcessError as e:
-        print(f"Failed to list remote entries at '{target}': {e}")
+        action = "search" if normalized_search else "list"
+        print(f"Failed to {action} remote entries at '{target}': {e}")
 
 
 def transfer_between_remotes(

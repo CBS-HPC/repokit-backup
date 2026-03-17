@@ -2,20 +2,17 @@
 Remote management - Detection, configuration, and listing.
 """
 
-import os
 import pathlib
 import subprocess
-import getpass
 import json
 import socket
 import time
 
-from repokit_common import PROJECT_ROOT, load_from_env, save_to_env, check_path_format
-from .auth import set_host_port, setup_ssh_agent_and_add_key
-from .remote_types import _detect_remote_type, _get_base_remote_type
+from repokit_common import PROJECT_ROOT, load_from_env, save_to_env
+from .auth import set_host_port as _set_host_port
+from .remote_types import get_base_remote_type
 from .remote_info import (
-    check_lumi_o_credentials,
-    ensure_repo_suffix as _ensure_repo_suffix,
+    ensure_repo_suffix as _ensure_repo_suffix_impl,
     remote_user_info as _remote_user_info,
 )
 from .registry import save_registry, load_all_registry, delete_from_registry, load_registry
@@ -30,6 +27,16 @@ from .rclone import (
 
 def _rclone_cmd(*args: str) -> list[str]:
     return ["rclone", *args]
+
+
+def set_host_port(remote_name: str):
+    """Compatibility wrapper exported from remotes module."""
+    return _set_host_port(remote_name)
+
+
+def _ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
+    """Compatibility wrapper exported from remotes module."""
+    return _ensure_repo_suffix_impl(folder, repo, project_root)
 
 
 def check_rclone_remote(remote_name: str) -> bool:
@@ -179,9 +186,8 @@ def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
     print(f"Rclone remote '{remote_name}' (erda) created.")
 
 
-def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
-    acl = "public-read" if "public" in remote_name.lower() else "private"
-
+def _add_lumio_remote(remote_name: str, access_key: str, secret_key: str):
+    acl = "private"
     command = _rclone_cmd(
         "config",
         "create",
@@ -192,9 +198,9 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
         "endpoint",
         "https://lumidata.eu",
         "access_key_id",
-        login,
+        access_key,
         "secret_access_key",
-        pass_key,
+        secret_key,
         "region",
         "other-v2-signature",
         "acl",
@@ -202,7 +208,31 @@ def _add_lumi_remote(remote_name: str, login: str, pass_key: str):
     )
 
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
-    print(f"Rclone remote '{remote_name}' (lumi) created.")
+    print(f"Rclone remote '{remote_name}' (lumio) created.")
+
+
+def _add_lumip_remote(remote_name: str, username: str):
+    host = (load_from_env("LUMIP_HOST") or "lumi.csc.fi").strip()
+    port = (load_from_env("LUMIP_PORT") or "22").strip()
+    save_to_env(host, "LUMIP_HOST")
+    save_to_env(port, "LUMIP_PORT")
+
+    command = _rclone_cmd(
+        "config",
+        "create",
+        remote_name,
+        "sftp",
+        "host",
+        host,
+        "port",
+        port,
+        "user",
+        username,
+        "use_agent",
+        "true",
+    )
+    subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+    print(f"Rclone remote '{remote_name}' (lumip) created.")
 
 
 def _is_port_listening(host: str, port: int, retries: int = 5, delay_s: float = 0.4) -> bool:
@@ -359,14 +389,15 @@ def _add_interactive_remote(remote_name: str, base_type: str):
 
 def _add_remote(
     remote_name: str,
+    backend: str,
     login: str = None,
     pass_key: str = None,
     oauth_token: str | None = None,
     ssh_mode: bool = False,
 ):
     """Add a new rclone remote or prepare runtime config."""
-    remote_type = _detect_remote_type(remote_name)
-    base_type = _get_base_remote_type(remote_name)
+    remote_type = backend
+    base_type = get_base_remote_type(backend)
     oauth_remotes = {"dropbox", "onedrive", "drive"}
 
     try:
@@ -377,8 +408,12 @@ def _add_remote(
         elif remote_type == "ucloud":
             return True
 
-        elif "lumi" in remote_type:
-            _add_lumi_remote(remote_name, login, pass_key)
+        elif remote_type == "lumio":
+            _add_lumio_remote(remote_name, login, pass_key)
+            return True
+
+        elif remote_type == "lumip":
+            _add_lumip_remote(remote_name, login)
             return True
 
         elif remote_type in oauth_remotes:
@@ -421,9 +456,9 @@ def _add_remote(
         return False
 
 
-def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
+def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_path: str):
     """Add folder mapping for remote with overwrite/merge safeguard, using ucloud config if applicable."""
-    remote_type = _detect_remote_type(remote_name)
+    remote_type = backend
     rclone_conf: pathlib.Path | None = None
     push_policy_default = "full"
 
@@ -451,7 +486,7 @@ def _add_folder(remote_name: str, base_folder: str, local_backup_path: str):
             mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:{normalized}")
             return normalized, list_cmd_local, mkdir_cmd_local
 
-        if "lumi" in remote_type:
+        if remote_type == "lumio":
             normalized = folder.lstrip("/")
             list_cmd_local = _rclone_cmd("lsd", f"{remote_name}:/{normalized}")
             mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:/{normalized}")
@@ -624,6 +659,7 @@ def list_remotes():
 
 def setup_rclone(
     remote_name: str = None,
+    backend: str | None = None,
     local_backup_path: str = None,
     oauth_token: str | None = None,
     ssh_mode: bool = False,
@@ -641,10 +677,14 @@ def setup_rclone(
 
     if remote_name:
         remote_name, login_key, pass_key, base_folder = _remote_user_info(
-            remote_name.lower(), local_backup_path, pathlib.Path(PROJECT_ROOT)
+            remote_name.lower(),
+            local_backup_path,
+            pathlib.Path(PROJECT_ROOT),
+            backend=backend or "sftp",
         )
         created = _add_remote(
             remote_name.lower(),
+            backend or "sftp",
             login_key,
             pass_key,
             oauth_token=oauth_token,
@@ -653,7 +693,7 @@ def setup_rclone(
         if not created:
             print(f"Aborting setup for '{remote_name}' because remote creation failed.")
             return
-        _add_folder(remote_name.lower(), base_folder, local_backup_path)
+        _add_folder(remote_name.lower(), backend or "sftp", base_folder, local_backup_path)
     else:
         install_rclone("./bin")
 
