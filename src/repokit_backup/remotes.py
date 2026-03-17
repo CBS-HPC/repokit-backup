@@ -693,6 +693,12 @@ def setup_rclone(
         if not created:
             print(f"Aborting setup for '{remote_name}' because remote creation failed.")
             return
+        if base_folder is None:
+            print(
+                f"Remote '{remote_name.lower()}' configured without a saved path mapping. "
+                "Use explicit paths for push/pull, or add a mapping later."
+            )
+            return
         _add_folder(remote_name.lower(), backend or "sftp", base_folder, local_backup_path)
     else:
         install_rclone("./bin")

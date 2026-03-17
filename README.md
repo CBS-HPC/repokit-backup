@@ -57,6 +57,7 @@ Wheel filenames include version tags and may change over time.
 
 | Command | Description |
 |---------|-------------|
+| `repokit-backup init` | Initialize local `repokit-backup` state in the current project root. |
 | `repokit-backup add` | Configure a backup remote and mapping. |
 | `repokit-backup push` | Push/sync project data to remote storage. |
 | `repokit-backup pull` | Restore/sync from remote to local project. |
@@ -71,6 +72,18 @@ Wheel filenames include version tags and may change over time.
 Full flag-by-flag behavior is documented in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
 
 ## Quick Start
+
+Initialize the current project root first:
+
+```bash
+repokit-backup init
+```
+
+This ensures:
+
+- `./bin/` exists under the current project root
+- `rclone` is installed or made available from that `./bin/`
+- `pyproject.toml` exists with `[tool.rcloneignore]` defaults
 
 Common setup examples:
 
@@ -103,7 +116,15 @@ repokit-backup add --remote dropbox-main --backend dropbox --path /work/shared/d
 
 For non-`add` commands, stored registry metadata is used first, with alias inference still available as a compatibility fallback for older mappings.
 
-During `add`, a persistent push policy is saved per remote:
+During `add`, `repokit-backup` now first asks:
+
+```text
+Create a local/remote path mapping now? [Y/n]:
+```
+
+If you answer `n`, the remote is configured but no registry mapping is created yet.
+
+If you answer `y`, `repokit-backup` then prompts for the remote base folder and saves a persistent push policy per remote:
 
 - `full`: push/pull `sync`, `copy`, and `move` are allowed
 - `append-only`: push `copy` only; pull `copy` only

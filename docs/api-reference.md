@@ -36,6 +36,7 @@ Implemented backend families in the current codebase:
 
 | Command | Purpose |
 |---|---|
+| `init` | Initialize local `repokit-backup` runtime state in the current project root |
 | `add` | Configure a remote and create a mapping entry |
 | `push` | Transfer local files to a remote |
 | `pull` | Transfer remote files to local storage |
@@ -189,6 +190,12 @@ Each registry entry contains:
 
 Mapped remotes allow `push`, `pull`, `ls`, and `diff` to run without explicit source/destination paths.
 
+`add` can also configure a remote without creating a mapping if you answer `n` to:
+
+```text
+Create a local/remote path mapping now? [Y/n]:
+```
+
 Unmapped remotes are supported only in limited cases:
 
 - `ls` falls back to remote root
@@ -196,6 +203,22 @@ Unmapped remotes are supported only in limited cases:
 - `push` still expects a saved mapping
 
 ## Command Reference
+
+### `init`
+
+Initializes `repokit-backup` state in the current working directory, or under `--project-root` if provided.
+
+Behavior:
+
+- ensures `./bin/` exists under the resolved project root
+- installs or wires `rclone` for that local `./bin/`
+- ensures `pyproject.toml` exists and contains `[tool.rcloneignore]` defaults
+- prints the resolved project root, `bin` path, and `pyproject.toml` path
+
+Notes:
+
+- `init` is intended to be run from the project root
+- unlike other commands, root resolution for `init` uses the current working directory by default instead of walking upward to older backup markers
 
 ### `add`
 
@@ -216,9 +239,11 @@ Behavior:
 
 - creates local `bin/` state if missing
 - requires `--backend`; alias prefix alone is not enough
-- prompts for remote base folder
-- prompts for policy
-- stores mapping in `./bin/rclone_remote.json`
+- first asks whether to create a local/remote path mapping
+- if mapping is enabled, prompts for remote base folder
+- if mapping is enabled, prompts for policy
+- if mapping is enabled, stores mapping in `./bin/rclone_remote.json`
+- if mapping is skipped, only the rclone remote is configured
 - if remote folder already exists, prompts:
   - overwrite
   - merge/sync

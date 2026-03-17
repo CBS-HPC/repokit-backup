@@ -8,6 +8,7 @@ from repokit_backup.cli import _resolved_add_backend
 from repokit_backup.remote_info import (
     _lumio_remote_info,
     _lumip_remote_info,
+    _oauth_remote_info,
     _validate_lumip_base_path,
 )
 from repokit_backup.remote_types import normalize_backend, resolve_backend
@@ -45,6 +46,7 @@ def test_lumio_remote_keeps_alias_and_persists_env(monkeypatch: pytest.MonkeyPat
         [
             "465000001",  # project id
             "ACCESS123",  # access key
+            "",  # create mapping default yes
             "rclone-backup/myrepo",  # base folder
         ]
     )
@@ -93,6 +95,7 @@ def test_lumip_selection_and_env_persistence(monkeypatch: pytest.MonkeyPatch):
         [
             "",  # keep project id default
             "",  # keep username default
+            "",  # create mapping default yes
             "4",  # flash storage class
             "",  # add repo suffix default yes
         ]
@@ -111,3 +114,17 @@ def test_lumip_selection_and_env_persistence(monkeypatch: pytest.MonkeyPatch):
     assert env_store["LUMIP_PROJECT_ID"] == "465000002"
     assert env_store["LUMIP_USERNAME"] == "alice"
     assert env_store["LUMIP_BASE_PATH"] == "/flash/465000002"
+
+
+def test_oauth_remote_info_can_skip_mapping(monkeypatch: pytest.MonkeyPatch):
+    answers = iter(["n"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    remote_name, _, _, base_folder = _oauth_remote_info(
+        "dropbox-main",
+        "myrepo",
+        pathlib.Path.cwd(),
+    )
+
+    assert remote_name == "dropbox-main"
+    assert base_folder is None

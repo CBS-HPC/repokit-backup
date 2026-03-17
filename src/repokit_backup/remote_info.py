@@ -31,6 +31,34 @@ def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> st
     return folder
 
 
+def _prompt_create_mapping() -> bool:
+    while True:
+        reply = input("Create a local/remote path mapping now? [Y/n]: ").strip().lower()
+        if reply in {"", "y", "yes"}:
+            return True
+        if reply in {"n", "no"}:
+            return False
+        print("Invalid choice. Use y or n.")
+
+
+def _prompt_base_folder(remote_name: str, default_base: str = "") -> str | None:
+    if not _prompt_create_mapping():
+        print("[INFO] Remote configured without a saved path mapping.")
+        return None
+
+    prompt = f"Enter base folder for {remote_name}"
+    if default_base:
+        prompt += f" [{default_base}]"
+    prompt += ": "
+
+    while True:
+        entered = input(prompt).strip()
+        value = entered or default_base
+        if value:
+            return value
+        print("Folder path cannot be empty. Answer 'n' in the previous prompt to skip mapping.")
+
+
 def _prompt_non_empty(prompt: str, secret: bool = False, default: str = "") -> str:
     while True:
         if secret:
@@ -117,13 +145,15 @@ def _lumio_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
     else:
         secret_key = _prompt_non_empty("LUMI-O secret key: ", secret=True)
 
-    base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
-    base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
+    base_folder = _prompt_base_folder(remote_name, default_base)
+    if base_folder is not None:
+        base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
 
     save_to_env(project_id, "LUMIO_PROJECT_ID")
     save_to_env(access_key, "LUMIO_ACCESS_KEY")
     save_to_env(secret_key, "LUMIO_SECRET_KEY")
-    save_to_env(base_folder, "LUMIO_DEFAULT_BASE")
+    if base_folder is not None:
+        save_to_env(base_folder, "LUMIO_DEFAULT_BASE")
 
     return remote_name, access_key, secret_key, base_folder
 
@@ -140,24 +170,33 @@ def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
 
     username = input(f"LUMI username [{user_default}]: ").strip() or user_default
 
-    base_root = _prompt_lumip_storage_root(project_id, username, base_default)
-    base_folder = ensure_repo_suffix(base_root, repo_name, project_root)
+    if _prompt_create_mapping():
+        base_root = _prompt_lumip_storage_root(project_id, username, base_default)
+        base_folder = ensure_repo_suffix(base_root, repo_name, project_root)
+        save_to_env(base_root, "LUMIP_BASE_PATH")
+    else:
+        print("[INFO] Remote configured without a saved path mapping.")
+        base_folder = None
 
     save_to_env(project_id, "LUMIP_PROJECT_ID")
     save_to_env(username, "LUMIP_USERNAME")
-    save_to_env(base_root, "LUMIP_BASE_PATH")
 
     return remote_name, username, None, base_folder
 
 
 def _ucloud_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
     default_base = f"/work/rclone-backup/{repo_name}"
-    base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
-    base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
+    base_folder = _prompt_base_folder(remote_name, default_base)
+    if base_folder is not None:
+        base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
     return remote_name, "ucloud", None, base_folder
 
 
 def _local_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
+    if not _prompt_create_mapping():
+        print("[INFO] Remote configured without a saved path mapping.")
+        return remote_name, None, None, None
+
     base_folder = input("Please enter the local path for rclone: ").strip().replace("'", "").replace('"', "")
     base_folder = check_path_format(base_folder)
     if not os.path.isdir(base_folder):
@@ -169,15 +208,17 @@ def _local_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
 
 def _oauth_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
     default_base = f"rclone-backup/{repo_name}"
-    base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
-    base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
+    base_folder = _prompt_base_folder(remote_name, default_base)
+    if base_folder is not None:
+        base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
     return remote_name, None, None, base_folder
 
 
 def _generic_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
     default_base = f"rclone-backup/{repo_name}"
-    base_folder = input(f"Enter base folder for {remote_name} [{default_base}]: ").strip() or default_base
-    base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
+    base_folder = _prompt_base_folder(remote_name, default_base)
+    if base_folder is not None:
+        base_folder = ensure_repo_suffix(base_folder, repo_name, project_root)
     return remote_name, None, None, base_folder
 
 

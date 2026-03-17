@@ -31,6 +31,23 @@ def _resolved_add_backend(explicit_backend: str | None, _remote_alias: str) -> s
     return backend
 
 
+def _resolve_cli_project_root(
+    explicit_project_root: str | None,
+    command: str | None = None,
+) -> pathlib.Path:
+    """Resolve the project root for the current CLI invocation."""
+    if explicit_project_root:
+        resolved_root = pathlib.Path(explicit_project_root).expanduser().resolve()
+        if not resolved_root.exists() or not resolved_root.is_dir():
+            raise ValueError(
+                f"Error: --project-root does not exist or is not a directory: {resolved_root}"
+            )
+        return resolved_root
+    if command == "init":
+        return pathlib.Path.cwd().resolve()
+    return detect_project_root(extra_markers={"bin/rclone_remote.json", "bin/rclone.conf"})
+
+
 def _ensure_rcloneignore_pyproject_config() -> None:
     """
     Ensure pyproject.toml exists and has [tool.rcloneignore] defaults.
@@ -78,10 +95,26 @@ def _ensure_rcloneignore_pyproject_config() -> None:
     )
 
 
+def _bootstrap_project_runtime(install_rclone_fn) -> tuple[pathlib.Path, pathlib.Path]:
+    """
+    Ensure local project state for repokit-backup exists.
+
+    Returns:
+        (bin_dir, pyproject_path)
+    """
+    _ensure_rcloneignore_pyproject_config()
+    if not install_rclone_fn("./bin"):
+        raise RuntimeError("Error: rclone installation/verification failed.")
+    bin_dir = (repokit_common.PROJECT_ROOT / pathlib.Path("./bin")).resolve()
+    pyproject_path = (repokit_common.PROJECT_ROOT / pathlib.Path(repokit_common.TOML_PATH)).resolve()
+    return bin_dir, pyproject_path
+
+
 # @ensure_correct_kernel
 def main():
     """Main CLI entry point."""
     pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("command", nargs="?")
     pre_parser.add_argument(
         "--project-root",
         dest="project_root",
@@ -89,15 +122,14 @@ def main():
     )
     pre_args, _ = pre_parser.parse_known_args()
 
-    if pre_args.project_root:
-        resolved_root = pathlib.Path(pre_args.project_root).expanduser().resolve()
-        if not resolved_root.exists() or not resolved_root.is_dir():
-            print(f"Error: --project-root does not exist or is not a directory: {resolved_root}")
-            sys.exit(2)
-    else:
-        resolved_root = detect_project_root(
-            extra_markers={"bin/rclone_remote.json", "bin/rclone.conf"}
+    try:
+        resolved_root = _resolve_cli_project_root(
+            explicit_project_root=pre_args.project_root,
+            command=getattr(pre_args, "command", None),
         )
+    except ValueError as exc:
+        print(str(exc))
+        sys.exit(2)
 
     os.chdir(resolved_root)
     repokit_common.PROJECT_ROOT = resolved_root
@@ -121,12 +153,6 @@ def main():
     )
     from .registry import load_all_registry, set_push_policy
 
-    _ensure_rcloneignore_pyproject_config()
-
-    if not install_rclone("./bin"):
-        print("Error: rclone installation/verification failed.")
-        sys.exit(1)
-
     parser = argparse.ArgumentParser(description="Backup manager CLI using rclone")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -141,6 +167,12 @@ def main():
         "--project-root",
         dest="project_root",
         help="Explicit project root directory (overrides auto-detection).",
+    )
+
+    # Init command
+    subparsers.add_parser(
+        "init",
+        help="Initialize repokit-backup in the current project root (creates ./bin and pyproject.toml config).",
     )
 
     # List command
@@ -312,6 +344,12 @@ def main():
 
     args = parser.parse_args()
 
+    try:
+        bin_dir, pyproject_path = _bootstrap_project_runtime(install_rclone)
+    except RuntimeError as exc:
+        print(str(exc))
+        sys.exit(1)
+
     # Normalize add source path options.
     add_local_path = None
     if getattr(args, "command", None) == "add":
@@ -457,7 +495,11 @@ def main():
 
     else:
         # Commands without a remote
-        if args.command == "list":
+        if args.command == "init":
+            print(f"Initialized repokit-backup in {repokit_common.PROJECT_ROOT}")
+            print(f"rclone bin: {bin_dir}")
+            print(f"pyproject: {pyproject_path}")
+        elif args.command == "list":
             list_remotes()
         elif args.command == "types":
             list_supported_remote_types()
