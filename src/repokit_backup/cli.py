@@ -17,9 +17,14 @@ from .remote_types import CANONICAL_BACKENDS, normalize_backend, resolve_backend
 SUPPORTED_BACKENDS = CANONICAL_BACKENDS
 
 
-def _resolved_add_backend(explicit_backend: str | None, remote_alias: str) -> str:
-    backend = resolve_backend(explicit_backend, remote_alias)
-    if not normalize_backend(backend):
+def _resolved_add_backend(explicit_backend: str | None, _remote_alias: str) -> str:
+    if not explicit_backend:
+        raise ValueError(
+            "--backend is required for `repokit-backup add`. "
+            f"Supported values: {', '.join(SUPPORTED_BACKENDS)}"
+        )
+    backend = normalize_backend(explicit_backend)
+    if not backend:
         raise ValueError(
             f"Unsupported backend '{explicit_backend}'. Supported values: {', '.join(SUPPORTED_BACKENDS)}"
         )
@@ -179,9 +184,10 @@ def main():
     add.add_argument("--remote", required=True, help="Remote name")
     add.add_argument(
         "--backend",
+        required=True,
         help=(
-            "Explicit backend type (examples: dropbox, onedrive, lumio/lumi-o, lumip/lumi-p/lumi-f). "
-            "Recommended for lumi aliases or when remote alias does not include backend prefix."
+            "Backend type for the remote being created "
+            "(examples: dropbox, onedrive, drive, erda, ucloud, lumio/lumi-o, lumip/lumi-p/lumi-f, local, s3, sftp)."
         ),
     )
     add_paths = add.add_mutually_exclusive_group()

@@ -71,12 +71,16 @@ Controls rclone verbosity.
 ### Alias vs backend
 
 `--remote` is the remote alias or name.
-It is not the source of truth for backend type when `--backend` is provided.
+For `add`, it is not the source of truth for backend type.
 
 Backend resolution for `add`:
 
 1. `--backend`
-2. infer from alias prefix
+
+For non-`add` commands, runtime backend resolution still uses:
+
+1. stored registry metadata
+2. infer from alias prefix for legacy compatibility
 3. fallback to `sftp`
 
 ### Canonical backends
@@ -200,7 +204,7 @@ Configures the rclone remote and creates a registry mapping.
 Arguments:
 
 - `--remote`: required alias/name
-- `--backend`: explicit backend override
+- `--backend`: required backend type for the remote being created
 - `--subdir`: project-relative local source path to use or create
 - `--path`: filesystem path for local source
 - `--local-path`, `--local_path`: deprecated alias for `--path`
@@ -211,6 +215,7 @@ Arguments:
 Behavior:
 
 - creates local `bin/` state if missing
+- requires `--backend`; alias prefix alone is not enough
 - prompts for remote base folder
 - prompts for policy
 - stores mapping in `./bin/rclone_remote.json`

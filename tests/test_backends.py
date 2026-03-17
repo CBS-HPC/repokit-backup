@@ -25,7 +25,11 @@ def test_backend_resolution_precedence():
     assert resolve_backend("lumio", "dropbox-main") == "lumio"
     assert resolve_backend(None, "lumi-f-data") == "lumip"
     assert _resolved_add_backend("lumi-o", "dropbox-main") == "lumio"
-    assert _resolved_add_backend(None, "lumip-data") == "lumip"
+
+
+def test_add_requires_explicit_backend():
+    with pytest.raises(ValueError, match="--backend is required"):
+        _resolved_add_backend(None, "lumip-data")
 
 
 def test_lumio_remote_keeps_alias_and_persists_env(monkeypatch: pytest.MonkeyPatch):

@@ -26,7 +26,11 @@ Notes:
 - `rclone`is automatically downloaded and installed if not already available
 - Other [Rclone-supported remotes](https://rclone.org/overview/#supported-storage-systems) **should work**, but have not yet been tested with this template's workflow.
 - All configured remotes and folder mappings are logged in `./bin/rclone_remote.json`.
-- Full command and behavior reference: [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md)
+
+## Documentation
+
+- `README.md`: installation, quick start, and common workflows
+- [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md): full CLI, backend, mapping, policy, and transfer behavior reference
 
 ## Installation
 
@@ -64,16 +68,18 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
 
+Full flag-by-flag behavior is documented in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
+
 ## Quick Start
 
 Common setup examples:
 
 ```bash
-repokit-backup add --remote dropbox-main
-repokit-backup add --remote onedrive-main
-repokit-backup add --remote drive-main
-repokit-backup add --remote erda-main
-repokit-backup add --remote ucloud-main
+repokit-backup add --remote dropbox-main --backend dropbox
+repokit-backup add --remote onedrive-main --backend onedrive
+repokit-backup add --remote drive-main --backend drive
+repokit-backup add --remote erda-main --backend erda
+repokit-backup add --remote ucloud-main --backend ucloud
 repokit-backup add --remote lumi-object --backend lumi-o
 repokit-backup add --remote lumi-scratch --backend lumi-p
 repokit-backup add --remote local-archive --backend local
@@ -85,25 +91,17 @@ Set source scope during add:
 
 ```bash
 # Project-relative source (created if missing)
-repokit-backup add --remote dropbox-main --subdir /data
+repokit-backup add --remote dropbox-main --backend dropbox --subdir /data
 
 # Filesystem source path
-repokit-backup add --remote dropbox-main --path /work/shared/data
+repokit-backup add --remote dropbox-main --backend dropbox --path /work/shared/data
 ```
 
 `--local-path` is still accepted for backward compatibility (alias of `--path` for `add`).
 
-`--remote` is an alias/name only. Backend resolution order for `add`:
-1. `--backend` (explicit, preferred)
-2. infer from alias prefix for backward compatibility
-3. fallback to `sftp`
+`--remote` is an alias/name only. For `add`, `--backend` is required and is the source of truth for the backend being created.
 
-Canonical backend names:
-
-- `lumio` (aliases: `lumio`, `lumi-o`)
-- `lumip` (aliases: `lumip`, `lumi-p`, `lumi-f`)
-
-Full backend and flag reference: [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md)
+For non-`add` commands, stored registry metadata is used first, with alias inference still available as a compatibility fallback for older mappings.
 
 During `add`, a persistent push policy is saved per remote:
 
@@ -119,29 +117,7 @@ If the remote folder already exists, the conflict prompt includes:
 - change folder
 - cancel
 
-LUMI backend environment keys:
-
-- `lumio`:
-  - `LUMIO_PROJECT_ID`
-  - `LUMIO_ACCESS_KEY`
-  - `LUMIO_SECRET_KEY`
-  - `LUMIO_DEFAULT_BASE`
-- `lumip`:
-  - `LUMIP_PROJECT_ID`
-  - `LUMIP_USERNAME`
-  - `LUMIP_BASE_PATH`
-  - `LUMIP_HOST` (default `lumi.csc.fi`)
-  - `LUMIP_PORT` (default `22`)
-
-`lumip` storage selector presets:
-
-- `/users/<username>`
-- `/project/<project_id>`
-- `/scratch/<project_id>`
-- `/flash/<project_id>`
-- custom absolute path
-
-`lumi-f` is treated as `lumip` with the `/flash/<project_id>` storage option.
+LUMI environment keys, backend aliases, and storage selector details are documented in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
 
 ## Common Workflows
 
@@ -237,15 +213,6 @@ List configured remotes and status:
 repokit-backup list
 ```
 
-`list` output includes:
-
-- remote alias
-- remote type/backend
-- mapped local and remote paths
-- push policy
-- last action and operation
-- timestamp and status
-
 Update policy for an existing remote:
 
 ```bash
@@ -274,29 +241,15 @@ repokit-backup types
 
 ## Backend Notes
 
-For OAuth remotes (`dropbox`, `onedrive`, `drive`), see:
-
-- `SSH tunnel OAuth mode` (interactive via local browser + SSH tunnel)
-- `Headless OAuth in containers` (token-based, non-interactive)
-
-For SFTP-style remotes:
-
-- `ERDA` uses prompted host/port/user authentication
-- `UCloud` uses the dedicated local `./bin/rclone_ucloud.conf`
-- `LUMI-P` and `LUMI-F` use SFTP plus a selected storage root
-- generic `sftp` uses interactive `rclone config create`
-
-For object-storage-style remotes:
-
-- `LUMI-O` uses the `https://lumidata.eu` S3-compatible endpoint
-- generic `s3` uses interactive `rclone config create`
+Backend-specific setup details are covered in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
+Use the sections below only for the two most common OAuth headless flows.
 
 ## SSH tunnel OAuth mode
 
 For remote/headless sessions where you can keep an SSH tunnel open from your local browser machine:
 
 ```bash
-repokit-backup add --remote dropbox --ssh
+repokit-backup add --remote dropbox --backend dropbox --ssh
 ```
 
 `repokit-backup` will print:
@@ -326,13 +279,13 @@ Copy the returned JSON token object into a file (for example `token.json`).
 Then in your container:
 
 ```bash
-repokit-backup add --remote dropbox --token '<PASTE_TOKEN_JSON>'
+repokit-backup add --remote dropbox --backend dropbox --token '<PASTE_TOKEN_JSON>'
 ```
 
 Or preferably:
 
 ```bash
-repokit-backup add --remote dropbox --token-file ./token.json
+repokit-backup add --remote dropbox --backend dropbox --token-file ./token.json
 ```
 
 The same flow applies to `onedrive` and `drive` by replacing `"dropbox"` in `rclone authorize`.
