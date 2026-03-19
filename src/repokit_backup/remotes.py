@@ -10,7 +10,7 @@ import time
 
 import repokit_common
 from repokit_common import load_from_env, save_to_env
-from .auth import set_host_port as _set_host_port
+from .auth import detect_existing_ssh_key, set_host_port as _set_host_port
 from .remote_types import get_base_remote_type
 from .remote_info import (
     ensure_repo_suffix as _ensure_repo_suffix_impl,
@@ -219,8 +219,11 @@ def _add_lumio_remote(remote_name: str, access_key: str, secret_key: str):
 def _add_lumip_remote(remote_name: str, username: str):
     host = (load_from_env("LUMIP_HOST") or "lumi.csc.fi").strip()
     port = (load_from_env("LUMIP_PORT") or "22").strip()
+    ssh_key_path = detect_existing_ssh_key("LUMIP_SSH_KEY_PATH", "SSH_PATH")
     save_to_env(host, "LUMIP_HOST")
     save_to_env(port, "LUMIP_PORT")
+    if ssh_key_path:
+        save_to_env(ssh_key_path, "LUMIP_SSH_KEY_PATH")
 
     command = _rclone_cmd(
         "config",
@@ -233,9 +236,14 @@ def _add_lumip_remote(remote_name: str, username: str):
         port,
         "user",
         username,
-        "use_agent",
-        "true",
     )
+    if ssh_key_path:
+        command += ["key_file", ssh_key_path]
+    else:
+        print(
+            "[WARN] No SSH key file detected for LUMI-P. Falling back to ssh-agent authentication."
+        )
+        command += ["use_agent", "true"]
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
     print(f"Rclone remote '{remote_name}' (lumip) created.")
 

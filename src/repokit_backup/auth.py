@@ -29,10 +29,13 @@ def _validate_port(port_str: str, default_val: str) -> str:
     return default_val
 
 
-def _detect_default_ssh_key() -> str:
-    existing = (load_from_env("SSH_PATH", "") or "").strip()
-    if existing:
-        return existing
+def detect_existing_ssh_key(*env_keys: str) -> str | None:
+    for key in env_keys:
+        existing = (load_from_env(key) or "").strip()
+        if existing:
+            expanded = str(pathlib.Path(existing).expanduser())
+            if pathlib.Path(expanded).exists():
+                return expanded
 
     home = pathlib.Path.home() / ".ssh"
     for name in ("id_ed25519", "id_rsa", "id_ecdsa"):
@@ -40,7 +43,14 @@ def _detect_default_ssh_key() -> str:
         if p.exists():
             return str(p)
 
-    return str(home / "id_ed25519")
+    return None
+
+
+def _detect_default_ssh_key() -> str:
+    detected = detect_existing_ssh_key("SSH_PATH")
+    if detected:
+        return detected
+    return str((pathlib.Path.home() / ".ssh" / "id_ed25519"))
 
 
 def set_host_port(remote_name: str) -> None:
@@ -142,4 +152,3 @@ def setup_ssh_agent_and_add_key(ssh_path: str) -> None:
         raise FileNotFoundError(f"SSH key not found: {ssh_path_expanded}")
 
     subprocess.run([ssh_add, ssh_path_expanded], check=True)
-

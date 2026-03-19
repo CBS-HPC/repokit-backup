@@ -7,6 +7,7 @@ import os
 import pathlib
 
 from repokit_common import check_path_format, load_from_env, save_to_env
+from .auth import detect_existing_ssh_key
 
 
 def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
@@ -162,6 +163,7 @@ def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
     project_default = (load_from_env("LUMIP_PROJECT_ID") or "").strip()
     user_default = (load_from_env("LUMIP_USERNAME") or getpass.getuser()).strip()
     base_default = (load_from_env("LUMIP_BASE_PATH") or f"/scratch/{project_default or 'PROJECT_ID'}").strip()
+    ssh_key_default = detect_existing_ssh_key("LUMIP_SSH_KEY_PATH", "SSH_PATH")
 
     if project_default:
         project_id = input(f"LUMI project id [{project_default}]: ").strip() or project_default
@@ -169,6 +171,20 @@ def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
         project_id = _prompt_non_empty("LUMI project id: ")
 
     username = input(f"LUMI username [{user_default}]: ").strip() or user_default
+
+    if ssh_key_default:
+        ssh_prompt = f"LUMI SSH private key [{ssh_key_default}] (leave empty to use default): "
+        ssh_key_path = input(ssh_prompt).strip() or ssh_key_default
+    else:
+        ssh_key_path = input(
+            "LUMI SSH private key (leave empty to use ssh-agent): "
+        ).strip()
+
+    ssh_key_path = str(pathlib.Path(ssh_key_path).expanduser()) if ssh_key_path else ""
+    if ssh_key_path:
+        if not pathlib.Path(ssh_key_path).exists():
+            raise ValueError(f"LUMI SSH key file not found: {ssh_key_path}")
+        save_to_env(ssh_key_path, "LUMIP_SSH_KEY_PATH")
 
     if _prompt_create_mapping():
         base_root = _prompt_lumip_storage_root(project_id, username, base_default)

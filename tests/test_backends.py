@@ -83,6 +83,7 @@ def test_lumip_selection_and_env_persistence(monkeypatch: pytest.MonkeyPatch):
         "LUMIP_PROJECT_ID": "465000002",
         "LUMIP_USERNAME": "alice",
         "LUMIP_BASE_PATH": "/scratch/465000002",
+        "LUMIP_SSH_KEY_PATH": "/home/alice/.ssh/id_ed25519",
     }
 
     monkeypatch.setattr("repokit_backup.remote_info.load_from_env", lambda key: env_store.get(key))
@@ -90,11 +91,21 @@ def test_lumip_selection_and_env_persistence(monkeypatch: pytest.MonkeyPatch):
         "repokit_backup.remote_info.save_to_env",
         lambda value, key: env_store.__setitem__(key, value),
     )
+    monkeypatch.setattr(
+        "repokit_backup.remote_info.detect_existing_ssh_key",
+        lambda *_args, **_kwargs: "/home/alice/.ssh/id_ed25519",
+    )
+    monkeypatch.setattr(
+        pathlib.Path,
+        "exists",
+        lambda self: str(self).replace("\\", "/") == "/home/alice/.ssh/id_ed25519",
+    )
 
     answers = iter(
         [
             "",  # keep project id default
             "",  # keep username default
+            "",  # keep SSH key default
             "",  # create mapping default yes
             "4",  # flash storage class
             "",  # add repo suffix default yes
@@ -114,6 +125,35 @@ def test_lumip_selection_and_env_persistence(monkeypatch: pytest.MonkeyPatch):
     assert env_store["LUMIP_PROJECT_ID"] == "465000002"
     assert env_store["LUMIP_USERNAME"] == "alice"
     assert env_store["LUMIP_BASE_PATH"] == "/flash/465000002"
+    assert env_store["LUMIP_SSH_KEY_PATH"].replace("\\", "/") == "/home/alice/.ssh/id_ed25519"
+
+
+def test_add_lumip_remote_prefers_key_file(monkeypatch: pytest.MonkeyPatch):
+    from repokit_backup import remotes
+
+    captured = {}
+
+    monkeypatch.setattr(
+        "repokit_backup.remotes.load_from_env",
+        lambda key: {"LUMIP_HOST": "lumi.csc.fi", "LUMIP_PORT": "22"}.get(key),
+    )
+    monkeypatch.setattr("repokit_backup.remotes.save_to_env", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "repokit_backup.remotes.detect_existing_ssh_key",
+        lambda *_args, **_kwargs: "/home/alice/.ssh/id_ed25519",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = cmd
+        return None
+
+    monkeypatch.setattr(remotes.subprocess, "run", fake_run)
+
+    remotes._add_lumip_remote("lumip_test", "alice")
+
+    assert "key_file" in captured["cmd"]
+    assert "/home/alice/.ssh/id_ed25519" in captured["cmd"]
+    assert "use_agent" not in captured["cmd"]
 
 
 def test_oauth_remote_info_can_skip_mapping(monkeypatch: pytest.MonkeyPatch):

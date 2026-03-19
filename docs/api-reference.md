@@ -139,6 +139,7 @@ Stored through `load_from_env(...)` and `save_to_env(...)`.
 - `LUMIP_PROJECT_ID`
 - `LUMIP_USERNAME`
 - `LUMIP_BASE_PATH`
+- `LUMIP_SSH_KEY_PATH`
 - `LUMIP_HOST`
 - `LUMIP_PORT`
 
@@ -263,7 +264,7 @@ Backend-specific setup behavior:
 - `erda`: SFTP configuration with prompted credentials or agent use
 - `ucloud`: SFTP-like mapping plus separate local `rclone_ucloud.conf`
 - `lumio`: prompts for project id, access key, secret key, and default base folder
-- `lumip`: prompts for project id, username, and storage class/root
+- `lumip`: prompts for project id, username, SSH private key path (preferred over ssh-agent), and storage class/root
 - `local`: prompts for a local target path
 - `sftp`, `s3`: falls back to interactive `rclone config create`
 
