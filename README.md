@@ -88,26 +88,26 @@ This ensures:
 Common setup examples:
 
 ```bash
-repokit-backup add --remote dropbox-main --backend dropbox
-repokit-backup add --remote onedrive-main --backend onedrive
-repokit-backup add --remote drive-main --backend drive
-repokit-backup add --remote erda-main --backend erda
-repokit-backup add --remote ucloud-main --backend ucloud
-repokit-backup add --remote lumi-object --backend lumi-o
-repokit-backup add --remote lumi-scratch --backend lumi-p
-repokit-backup add --remote local-archive --backend local
-repokit-backup add --remote sftp-lab --backend sftp
-repokit-backup add --remote s3-archive --backend s3
+repokit-backup add --remote myproject --backend dropbox
+repokit-backup add --remote shared-data --backend onedrive
+repokit-backup add --remote research-drive --backend drive
+repokit-backup add --remote archive --backend erda
+repokit-backup add --remote project-copy --backend ucloud
+repokit-backup add --remote object-store --backend lumi-o
+repokit-backup add --remote project-space --backend lumi-p
+repokit-backup add --remote local-copy --backend local
+repokit-backup add --remote lab-server --backend sftp
+repokit-backup add --remote cold-storage --backend s3
 ```
 
 Set source scope during add:
 
 ```bash
 # Project-relative source (created if missing)
-repokit-backup add --remote dropbox-main --backend dropbox --subdir /data
+repokit-backup add --remote myproject --backend dropbox --subdir /data
 
 # Filesystem source path
-repokit-backup add --remote dropbox-main --backend dropbox --path /work/shared/data
+repokit-backup add --remote myproject --backend dropbox --path /work/shared/data
 ```
 
 `--local-path` is still accepted for backward compatibility (alias of `--path` for `add`).
@@ -145,7 +145,7 @@ LUMI environment keys, backend aliases, and storage selector details are documen
 Push to remote:
 
 ```bash
-repokit-backup push --remote dropbox-main
+repokit-backup push --remote myproject
 ```
 
 This command performs the following:
@@ -157,7 +157,7 @@ This command performs the following:
 Pull backup from remote:
 
 ```bash
-repokit-backup pull --remote dropbox-main
+repokit-backup pull --remote myproject
 ```
 
 Note: if remote policy is `append-only` or `pull-only`, `pull` auto-switches `sync`/`move` to `copy`.
@@ -166,8 +166,8 @@ For unmapped remotes, `pull` requires `--path`; if `--remote-path` is omitted it
 Interactive file/folder selection for transfer:
 
 ```bash
-repokit-backup push --remote dropbox-main --select
-repokit-backup pull --remote dropbox-main --select
+repokit-backup push --remote myproject --select
+repokit-backup pull --remote myproject --select
 ```
 
 `--select` opens an interactive picker (number/range syntax like `1,3,5-7`) and transfers only selected entries.
@@ -175,24 +175,24 @@ repokit-backup pull --remote dropbox-main --select
 Scope selection to a subpath:
 
 ```bash
-repokit-backup push --remote dropbox-main --select /data
-repokit-backup pull --remote dropbox-main --select /data
+repokit-backup push --remote myproject --select /data
+repokit-backup pull --remote myproject --select /data
 ```
 
 Direct path selection also works (non-interactive include fallback):
 
 ```bash
-repokit-backup pull --remote dropbox-main --select /data/dataset1/file1.txt
-repokit-backup push --remote dropbox-main --select /data/dataset1/file1.txt
+repokit-backup pull --remote myproject --select /data/dataset1/file1.txt
+repokit-backup push --remote myproject --select /data/dataset1/file1.txt
 ```
 
 Non-interactive recursive filtering for transfer:
 
 ```bash
-repokit-backup push --remote dropbox-main --search "/data/**/*.parquet"
-repokit-backup pull --remote dropbox-main --path ./restore --search "/data/**/*.parquet"
-repokit-backup pull --remote dropbox-main --remote-path "/archive" --path ./restore --search "20250313_*"
-repokit-backup pull --remote test --remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*" --path .
+repokit-backup push --remote myproject --search "/data/**/*.parquet"
+repokit-backup pull --remote myproject --path ./restore --search "/data/**/*.parquet"
+repokit-backup pull --remote myproject --remote-path "/archive" --path ./restore --search "backup_*"
+repokit-backup pull --remote archive --remote-path "/archive/project-data" --search "datasets/file_202001*" --path .
 ```
 
 `--search` is evaluated relative to the current source base:
@@ -208,30 +208,30 @@ For example, `/data/**/*.parquet` keeps the `data/...` tree on the destination.
 Transfer between two configured remotes:
 
 ```bash
-repokit-backup transfer --source dropbox-main --destination erda-main --mode copy --confirm
+repokit-backup transfer --source myproject --destination archive --mode copy --confirm
 ```
 
 List remote entries at mapped root or a subpath:
 
 ```bash
-repokit-backup ls --remote dropbox-main
-repokit-backup ls --remote dropbox-main --path /data
+repokit-backup ls --remote myproject
+repokit-backup ls --remote myproject --path /data
 ```
 
 If a remote has no saved mapping, `ls` falls back to the remote root:
 
 ```bash
-repokit-backup ls --remote dropbox-main
-repokit-backup ls --remote dropbox-main --path /data
+repokit-backup ls --remote myproject
+repokit-backup ls --remote myproject --path /data
 ```
 
 Recursive search for remote files/folders:
 
 ```bash
-repokit-backup ls --remote dropbox-main --search "/data/file_*.txt"
-repokit-backup ls --remote dropbox-main --search "/20250313_*"
-repokit-backup ls --remote dropbox-main --path /data --search "file_*.txt"
-repokit-backup ls --remote dropbox-main --search "/*/file_*.txt"
+repokit-backup ls --remote myproject --search "/data/file_*.txt"
+repokit-backup ls --remote myproject --search "/backup_*"
+repokit-backup ls --remote myproject --path /data --search "file_*.txt"
+repokit-backup ls --remote myproject --search "/*/file_*.txt"
 ```
 
 For `ls --search`, patterns starting with `/` are anchored at remote root. Relative patterns search under the current `--path` or mapped base.
@@ -251,21 +251,21 @@ repokit-backup list
 Update policy for an existing remote:
 
 ```bash
-repokit-backup policy --remote dropbox-main --set full
-repokit-backup policy --remote dropbox-main --set append-only
-repokit-backup policy --remote dropbox-main --set pull-only
+repokit-backup policy --remote myproject --set full
+repokit-backup policy --remote myproject --set append-only
+repokit-backup policy --remote myproject --set pull-only
 ```
 
 View differences before sync:
 
 ```bash
-repokit-backup diff --remote dropbox-main
+repokit-backup diff --remote myproject
 ```
 
 Remove a remote:
 
 ```bash
-repokit-backup delete --remote dropbox-main
+repokit-backup delete --remote myproject
 ```
 
 View supported remote types:

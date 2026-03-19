@@ -288,6 +288,7 @@ Arguments:
 
 Behavior:
 
+- default mode is `sync` unless `--mode` is provided
 - uses the mapped local source path
 - uses the mapped remote path unless `--remote-path` is given
 - reads ignore patterns from `[tool.rcloneignore]` if the local source is the project root
@@ -296,7 +297,7 @@ Behavior:
 
 Search/filter rules:
 
-- `--remote-path` accepts either a full rclone URI (`dropbox-main:/archive`) or a remote-scoped path (`/archive`) when `--remote dropbox-main` is already supplied
+- `--remote-path` accepts either a full rclone URI (`myproject:/archive`) or a remote-scoped path (`/archive`) when `--remote myproject` is already supplied
 - `--search` is evaluated on the local source side
 - relative patterns search under the current local source base
 - patterns starting with `/` are anchored to the local source root
@@ -325,6 +326,7 @@ Arguments:
 
 Mapped remote behavior:
 
+- default mode is `sync` unless `--mode` is provided
 - source defaults to mapped `remote_path`
 - destination defaults to mapped `local_path`
 
@@ -337,17 +339,18 @@ This makes ad hoc restore possible even before a persistent mapping has been cre
 
 Search/filter rules:
 
-- `--remote-path` accepts either a full rclone URI (`dropbox-main:/archive`) or a remote-scoped path (`/archive`) when `--remote dropbox-main` is already supplied
+- `--remote-path` accepts either a full rclone URI (`myproject:/archive`) or a remote-scoped path (`/archive`) when `--remote myproject` is already supplied
 - `--search` is evaluated on the remote source side
 - relative patterns search under the current remote source base
 - patterns starting with `/` are anchored to the remote root
 - when a search contains a deterministic path prefix, the remote source is narrowed to that prefix and the local destination is augmented with the same prefix so folder structure is preserved
-- example: `--remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*"` narrows the source to `.../taqtrade_dummy`, augments the local destination with `taqtrade_dummy/`, and uses include pattern `taqtrade_202001*`
+- example: `--remote-path "/archive/project-data" --search "datasets/file_202001*"` narrows the source to `.../datasets`, augments the local destination with `datasets/`, and uses include pattern `file_202001*`
 - for direct file pulls with `--select`, local parent directories are created automatically
 - `--search` and `--select` are mutually exclusive
 
 Policy rules:
 
+- default `sync`/`move` requests are auto-switched to `copy` when policy is `append-only` or `pull-only`
 - `append-only` and `pull-only` force pull mode to `copy`
 
 ### `ls`
@@ -375,11 +378,11 @@ Search rules:
 Examples:
 
 ```bash
-repokit-backup ls --remote dropbox-main
-repokit-backup ls --remote dropbox-main --path /data
-repokit-backup ls --remote dropbox-main --search "/20250313_*"
-repokit-backup ls --remote dropbox-main --path /data --search "file_*.txt"
-repokit-backup ls --remote dropbox-main --search "/*/file_*.txt"
+repokit-backup ls --remote myproject
+repokit-backup ls --remote myproject --path /data
+repokit-backup ls --remote myproject --search "/backup_*"
+repokit-backup ls --remote myproject --path /data --search "file_*.txt"
+repokit-backup ls --remote myproject --search "/*/file_*.txt"
 ```
 
 ### `list`
@@ -499,7 +502,7 @@ Meaning depends on command:
 
 Accepted forms:
 
-- full rclone URI: `dropbox-main:/archive`
+- full rclone URI: `myproject:/archive`
 - remote-scoped path when `--remote` is already given: `/archive`
 
 ## OAuth and SSH Mode
@@ -541,9 +544,9 @@ Schema example:
 
 ```json
 {
-  "dropbox-main": {
-    "remote_path": "dropbox-main:rclone-backup/myproject",
-    "local_path": "/work/myproject",
+  "myproject": {
+    "remote_path": "myproject:rclone-backup/project-name",
+    "local_path": "/path/to/project",
     "remote_type": "dropbox",
     "push_policy": "full",
     "last_action": "push",
@@ -571,41 +574,41 @@ Schema example:
 ### Add and map a Dropbox remote
 
 ```bash
-repokit-backup add --remote dropbox-main --backend dropbox --subdir /data
+repokit-backup add --remote myproject --backend dropbox --subdir /data
 ```
 
 ### Push only parquet files under `data/`
 
 ```bash
-repokit-backup push --remote dropbox-main --search "/data/**/*.parquet"
+repokit-backup push --remote myproject --search "/data/**/*.parquet"
 ```
 
 ### Pull from an unmapped remote root
 
 ```bash
-repokit-backup pull --remote dropbox-main --path ./restore
+repokit-backup pull --remote myproject --path ./restore
 ```
 
 ### Pull from an explicit remote archive path
 
 ```bash
-repokit-backup pull --remote dropbox-main --remote-path "/archive" --path ./restore
+repokit-backup pull --remote myproject --remote-path "/archive" --path ./restore
 ```
 
 ### Pull from an explicit base plus relative search
 
 ```bash
-repokit-backup pull --remote test --remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*" --path .
+repokit-backup pull --remote archive --remote-path "/archive/project-data" --search "datasets/file_202001*" --path .
 ```
 
 ### Pull with a root-anchored search only
 
 ```bash
-repokit-backup pull --remote test --search "/Team Folder - (LIB)/taqtrade_dummy/taqtrade_202001*" --path .
+repokit-backup pull --remote archive --search "/archive/project-data/datasets/file_202001*" --path .
 ```
 
 ### Search the remote for dated files
 
 ```bash
-repokit-backup ls --remote dropbox-main --search "/20250313_*"
+repokit-backup ls --remote myproject --search "/backup_*"
 ```
