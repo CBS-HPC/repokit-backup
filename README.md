@@ -30,7 +30,7 @@ Notes:
 ## Documentation
 
 - `README.md`: installation, quick start, and common workflows
-- [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md): full CLI, backend, mapping, policy, and transfer behavior reference
+- [`docs/api-reference.md`](docs/api-reference.md): full CLI, backend, mapping, policy, and transfer behavior reference
 
 ## Installation
 
@@ -58,7 +58,7 @@ Wheel filenames include version tags and may change over time.
 | Command | Description |
 |---------|-------------|
 | `repokit-backup init` | Initialize local `repokit-backup` state in the current project root. |
-| `repokit-backup add` | Configure a backup remote and mapping. |
+| `repokit-backup add` | Configure a backup remote and optional mapping. |
 | `repokit-backup push` | Push/sync project data to remote storage. |
 | `repokit-backup pull` | Restore/sync from remote to local project. |
 | `repokit-backup diff` | Show remote/local diff report. |
@@ -69,7 +69,7 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
 
-Full flag-by-flag behavior is documented in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
+Full flag-by-flag behavior is documented in [`docs/api-reference.md`](docs/api-reference.md).
 
 ## Quick Start
 
@@ -122,7 +122,7 @@ During `add`, `repokit-backup` now first asks:
 Create a local/remote path mapping now? [Y/n]:
 ```
 
-If you answer `n`, the remote is configured but no registry mapping is created yet.
+If you answer `n`, the remote is configured and registered, but `remote_path` and `local_path` are left unmapped until you add them later.
 
 If you answer `y`, `repokit-backup` then prompts for the remote base folder and saves a persistent push policy per remote:
 
@@ -138,7 +138,7 @@ If the remote folder already exists, the conflict prompt includes:
 - change folder
 - cancel
 
-LUMI environment keys, backend aliases, and storage selector details are documented in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
+LUMI environment keys, backend aliases, and storage selector details are documented in [`docs/api-reference.md`](docs/api-reference.md).
 
 ## Common Workflows
 
@@ -191,10 +191,18 @@ Non-interactive recursive filtering for transfer:
 ```bash
 repokit-backup push --remote dropbox-main --search "/data/**/*.parquet"
 repokit-backup pull --remote dropbox-main --path ./restore --search "/data/**/*.parquet"
-repokit-backup pull --remote dropbox-main --remote-path dropbox-main:/archive --path ./restore --search "20250313_*"
+repokit-backup pull --remote dropbox-main --remote-path "/archive" --path ./restore --search "20250313_*"
+repokit-backup pull --remote test --remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*" --path .
 ```
 
-`--search` preserves relative folder structure under the transfer root. For example, `/data/**/*.parquet` keeps the `data/...` tree on the destination.
+`--search` is evaluated relative to the current source base:
+
+- `push`: relative to the mapped local source path
+- `pull`: relative to the mapped remote path or explicit `--remote-path`
+- patterns starting with `/` are anchored to the source root
+
+When a search pattern contains a deterministic path prefix, `repokit-backup` narrows the transfer source to that prefix and augments the destination with the same prefix so folder structure is preserved.
+For example, `/data/**/*.parquet` keeps the `data/...` tree on the destination.
 `--search` and `--select` are mutually exclusive for `push` and `pull`.
 
 Transfer between two configured remotes:
@@ -234,6 +242,12 @@ List configured remotes and status:
 repokit-backup list
 ```
 
+`list` distinguishes:
+
+- `[mapped]`: remote and local paths are saved
+- `[registered]`: remote is configured in the registry, but no paths are mapped yet
+- `[unmapped]`: remote exists in rclone config but has no registry entry
+
 Update policy for an existing remote:
 
 ```bash
@@ -262,7 +276,7 @@ repokit-backup types
 
 ## Backend Notes
 
-Backend-specific setup details are covered in [docs/api-reference.md](C:/work/repokit-packages/repokit-backup/docs/api-reference.md).
+Backend-specific setup details are covered in [`docs/api-reference.md`](docs/api-reference.md).
 Use the sections below only for the two most common OAuth headless flows.
 
 ## SSH tunnel OAuth mode

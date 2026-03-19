@@ -1,7 +1,7 @@
 # repokit-backup API Reference
 
 This document is the full command and behavior reference for `repokit-backup`.
-Use [README.md](C:/work/repokit-packages/repokit-backup/README.md) for quick-start workflows and this document for exact flag, mapping, backend, and transfer semantics.
+Use [`README.md`](../README.md) for quick-start workflows and this document for exact flag, mapping, backend, and transfer semantics.
 
 ## Overview
 
@@ -37,12 +37,12 @@ Implemented backend families in the current codebase:
 | Command | Purpose |
 |---|---|
 | `init` | Initialize local `repokit-backup` runtime state in the current project root |
-| `add` | Configure a remote and create a mapping entry |
+| `add` | Configure a remote and optionally create a mapping entry |
 | `push` | Transfer local files to a remote |
 | `pull` | Transfer remote files to local storage |
 | `ls` | List or search files on a remote |
 | `list` | Show configured remotes and registry entries |
-| `policy` | Change saved transfer policy for a mapped remote |
+| `policy` | Change saved transfer policy for a configured remote |
 | `diff` | Compare mapped local and remote content |
 | `delete` | Delete remote config and registry mapping |
 | `transfer` | Copy or sync between two remotes |
@@ -196,6 +196,12 @@ Mapped remotes allow `push`, `pull`, `ls`, and `diff` to run without explicit so
 Create a local/remote path mapping now? [Y/n]:
 ```
 
+If you answer `n`, the remote is still written to `./bin/rclone_remote.json` with:
+
+- `remote_path: null`
+- `local_path: null`
+- `status: "configured"`
+
 Unmapped remotes are supported only in limited cases:
 
 - `ls` falls back to remote root
@@ -222,7 +228,7 @@ Notes:
 
 ### `add`
 
-Configures the rclone remote and creates a registry mapping.
+Configures the rclone remote and optionally creates a registry mapping.
 
 Arguments:
 
@@ -243,7 +249,7 @@ Behavior:
 - if mapping is enabled, prompts for remote base folder
 - if mapping is enabled, prompts for policy
 - if mapping is enabled, stores mapping in `./bin/rclone_remote.json`
-- if mapping is skipped, only the rclone remote is configured
+- if mapping is skipped, the remote is still registered in `./bin/rclone_remote.json` with null paths
 - if remote folder already exists, prompts:
   - overwrite
   - merge/sync
@@ -290,9 +296,12 @@ Behavior:
 
 Search/filter rules:
 
-- `--search` is a source-side include filter
-- `--search "/data/**/*.parquet"` becomes include pattern `data/**/*.parquet`
-- transfer root is unchanged, so relative folder structure is preserved
+- `--remote-path` accepts either a full rclone URI (`dropbox-main:/archive`) or a remote-scoped path (`/archive`) when `--remote dropbox-main` is already supplied
+- `--search` is evaluated on the local source side
+- relative patterns search under the current local source base
+- patterns starting with `/` are anchored to the local source root
+- when a search contains a deterministic path prefix, the local source is narrowed to that prefix and the remote destination is augmented with the same prefix so folder structure is preserved
+- example: `--search "/data/**/*.parquet"` narrows the local source to `data/`, augments the remote destination with `data/`, and uses include pattern `**/*.parquet`
 - `--search` and `--select` are mutually exclusive
 
 Policy rules:
@@ -328,8 +337,12 @@ This makes ad hoc restore possible even before a persistent mapping has been cre
 
 Search/filter rules:
 
-- `--search` filters the remote source side
-- folder structure is preserved under the local destination
+- `--remote-path` accepts either a full rclone URI (`dropbox-main:/archive`) or a remote-scoped path (`/archive`) when `--remote dropbox-main` is already supplied
+- `--search` is evaluated on the remote source side
+- relative patterns search under the current remote source base
+- patterns starting with `/` are anchored to the remote root
+- when a search contains a deterministic path prefix, the remote source is narrowed to that prefix and the local destination is augmented with the same prefix so folder structure is preserved
+- example: `--remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*"` narrows the source to `.../taqtrade_dummy`, augments the local destination with `taqtrade_dummy/`, and uses include pattern `taqtrade_202001*`
 - for direct file pulls with `--select`, local parent directories are created automatically
 - `--search` and `--select` are mutually exclusive
 
@@ -379,9 +392,15 @@ It combines:
 - remotes known in `./bin/rclone_remote.json`
 - warning markers when a registry entry no longer exists in the active rclone config
 
+State labels:
+
+- `[mapped]`: registry entry has both `remote_path` and `local_path`
+- `[registered]`: registry entry exists but paths are null
+- `[unmapped]`: rclone config entry exists without a registry record
+
 ### `policy`
 
-Updates the saved policy for an existing mapped remote.
+Updates the saved policy for an existing configured remote.
 
 Arguments:
 
@@ -478,6 +497,11 @@ Meaning depends on command:
 - `push`: override remote destination
 - `pull`: override remote source
 
+Accepted forms:
+
+- full rclone URI: `dropbox-main:/archive`
+- remote-scoped path when `--remote` is already given: `/archive`
+
 ## OAuth and SSH Mode
 
 OAuth backends:
@@ -565,7 +589,19 @@ repokit-backup pull --remote dropbox-main --path ./restore
 ### Pull from an explicit remote archive path
 
 ```bash
-repokit-backup pull --remote dropbox-main --remote-path dropbox-main:/archive --path ./restore
+repokit-backup pull --remote dropbox-main --remote-path "/archive" --path ./restore
+```
+
+### Pull from an explicit base plus relative search
+
+```bash
+repokit-backup pull --remote test --remote-path "/Team Folder - (LIB)" --search "taqtrade_dummy/taqtrade_202001*" --path .
+```
+
+### Pull with a root-anchored search only
+
+```bash
+repokit-backup pull --remote test --search "/Team Folder - (LIB)/taqtrade_dummy/taqtrade_202001*" --path .
 ```
 
 ### Search the remote for dated files

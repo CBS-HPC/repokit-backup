@@ -218,6 +218,14 @@ def _join_remote_path(base_remote_path: str, sub_path: str) -> str:
     return f"{prefix}:{tail}/{sub_path}" if tail else f"{prefix}:{sub_path}"
 
 
+def _join_remote_search_path(base_remote_path: str, sub_path: str, remote_name: str) -> str:
+    if not sub_path:
+        return base_remote_path
+    if base_remote_path == _remote_root(remote_name):
+        return f"{base_remote_path}/{sub_path.lstrip('/')}"
+    return _join_remote_path(base_remote_path, sub_path)
+
+
 def _remote_root(remote_name: str) -> str:
     return f"{(remote_name or '').strip().lower()}:"
 
@@ -229,6 +237,26 @@ def _list_target_path(remote_name: str, remote_path: str | None, sub_path: str =
         return base_remote
     if remote_path:
         return _join_remote_path(base_remote, normalized.lstrip("/"))
+    return f"{_remote_root(remote_name)}{normalized}"
+
+
+def _normalize_explicit_remote_path(remote_name: str, remote_path: str | None) -> str | None:
+    """
+    Normalize a user-provided remote path.
+
+    Accept either:
+    - a full rclone remote URI, e.g. ``test:/folder``
+    - a remote-scoped path when ``--remote test`` is already supplied,
+      e.g. ``/folder`` or ``folder``
+    """
+    if remote_path is None:
+        return None
+
+    normalized = remote_path.strip().replace("\\", "/")
+    if normalized in {"", "."}:
+        return _remote_root(remote_name)
+    if ":" in normalized:
+        return normalized
     return f"{_remote_root(remote_name)}{normalized}"
 
 
@@ -248,6 +276,87 @@ def _search_include_patterns(search_pattern: str | None) -> list[str]:
     if normalized.endswith("/"):
         return [f"{normalized.rstrip('/')}/**"]
     return [normalized]
+
+
+def _has_glob_chars(segment: str) -> bool:
+    return any(ch in segment for ch in ["*", "?", "["])
+
+
+def _search_prefix_and_remainder(search_pattern: str | None) -> tuple[str, str, bool]:
+    normalized, anchored_to_root = _normalize_search_pattern(search_pattern)
+    if not normalized:
+        return "", "", anchored_to_root
+
+    stripped = normalized.rstrip("/")
+    if not stripped:
+        return "", "", anchored_to_root
+
+    parts = [part for part in stripped.split("/") if part]
+    if not parts:
+        return "", "", anchored_to_root
+
+    first_wildcard_idx = next((i for i, part in enumerate(parts) if _has_glob_chars(part)), None)
+
+    if normalized.endswith("/"):
+        if first_wildcard_idx is None:
+            return stripped, "", anchored_to_root
+        prefix = "/".join(parts[:first_wildcard_idx])
+        remainder = "/".join(parts[first_wildcard_idx:]) + "/"
+        return prefix, remainder, anchored_to_root
+
+    if first_wildcard_idx is None:
+        if len(parts) == 1:
+            return "", parts[0], anchored_to_root
+        return "/".join(parts[:-1]), parts[-1], anchored_to_root
+
+    if first_wildcard_idx == 0:
+        return "", stripped, anchored_to_root
+
+    return "/".join(parts[:first_wildcard_idx]), "/".join(parts[first_wildcard_idx:]), anchored_to_root
+
+
+def _join_local_path(base_path: str, sub_path: str) -> str:
+    if not sub_path:
+        return base_path
+    return str(pathlib.Path(base_path) / pathlib.Path(*[part for part in sub_path.split("/") if part]))
+
+
+def _resolve_transfer_search(
+    remote_name: str,
+    src: str,
+    dst: str,
+    src_kind: str,
+    search_pattern: str | None,
+) -> tuple[str, str, list[str]]:
+    """
+    Resolve a search pattern for transfer commands.
+
+    The search remains relative to the source base by default. If the pattern has a
+    deterministic path prefix, narrow the transfer source to that prefix and augment
+    the destination with the same prefix so folder structure is preserved.
+    """
+    prefix_dir, remainder, anchored_to_root = _search_prefix_and_remainder(search_pattern)
+    if not search_pattern:
+        return src, dst, []
+
+    effective_src = src
+    effective_dst = dst
+    if src_kind == "remote" and anchored_to_root:
+        effective_src = _remote_root(remote_name)
+
+    if prefix_dir:
+        if src_kind == "remote":
+            effective_src = _join_remote_search_path(effective_src, prefix_dir, remote_name)
+        else:
+            effective_src = _join_local_path(effective_src, prefix_dir)
+
+        if ":" in str(dst):
+            effective_dst = _join_remote_path(str(dst), prefix_dir)
+        else:
+            effective_dst = _join_local_path(str(dst), prefix_dir)
+
+    include_patterns = _search_include_patterns(remainder) if remainder else []
+    return effective_src, effective_dst, include_patterns
 
 
 def _select_source_path(src: str, src_kind: str, select_path: str | None) -> tuple[str, str]:
@@ -497,7 +606,11 @@ def push_rclone(
             )
             continue
 
-        target_path = new_path if new_path is not None else _remote_path
+        target_path = (
+            _normalize_explicit_remote_path(remote_key, new_path)
+            if new_path is not None
+            else _remote_path
+        )
         if rclone_commit:
             flag = rclone_commit(
                 _local_path, flag, msg=f"Rclone Push from {_local_path} to {target_path}"
@@ -505,7 +618,17 @@ def push_rclone(
         exclude_patterns = _exclude_patterns(_local_path)
         exclude_patterns += _nested_remote_excludes(remote_key, _local_path, registry)
         exclude_patterns = sorted(set(exclude_patterns))
-        include_patterns = _search_include_patterns(search_pattern)
+        transfer_src = _local_path
+        transfer_dst = target_path
+        include_patterns = []
+        if search_pattern:
+            transfer_src, transfer_dst, include_patterns = _resolve_transfer_search(
+                remote_name=remote_key,
+                src=_local_path,
+                dst=target_path,
+                src_kind="local",
+                search_pattern=search_pattern,
+            )
         if select_path is not None:
             selected = _select_include_patterns(
                 _local_path,
@@ -519,8 +642,8 @@ def push_rclone(
 
         _rclone_transfer(
             remote_name=remote_key,
-            src=_local_path,
-            dst=target_path,
+            src=transfer_src,
+            dst=transfer_dst,
             src_kind="local",
             action="push",
             operation=operation,
@@ -569,8 +692,9 @@ def pull_rclone(
         )
         operation = "copy"
 
+    explicit_remote_path = _normalize_explicit_remote_path(remote_name.lower(), remote_path)
     has_mapping = bool(_remote_path and _local_path)
-    effective_remote_path = remote_path or _remote_path
+    effective_remote_path = explicit_remote_path or _remote_path
     effective_local_path = new_path or _local_path
 
     if not has_mapping:
@@ -607,10 +731,20 @@ def pull_rclone(
         exclude_patterns = _exclude_patterns(_local_path)
         exclude_patterns += _nested_remote_excludes(remote_name.lower(), _local_path, registry)
     exclude_patterns = sorted(set(exclude_patterns))
-    include_patterns = _search_include_patterns(search_pattern)
+    transfer_remote_path = effective_remote_path
+    transfer_local_path = effective_local_path
+    include_patterns = []
+    if search_pattern:
+        transfer_remote_path, transfer_local_path, include_patterns = _resolve_transfer_search(
+            remote_name=remote_name.lower(),
+            src=effective_remote_path,
+            dst=effective_local_path,
+            src_kind="remote",
+            search_pattern=search_pattern,
+        )
     if select_path is not None:
         selected = _select_include_patterns(
-            effective_remote_path,
+            transfer_remote_path,
             "remote",
             remote_name.lower(),
             select_path,
@@ -621,13 +755,16 @@ def pull_rclone(
         # Ensure local parent path exists for direct file selections.
         normalized = _normalize_select_subpath(select_path)
         if normalized and not normalized.endswith("/"):
-            local_target = pathlib.Path(effective_local_path) / pathlib.Path(normalized)
+            local_target = pathlib.Path(transfer_local_path) / pathlib.Path(normalized)
             local_target.parent.mkdir(parents=True, exist_ok=True)
+
+    if not os.path.exists(transfer_local_path):
+        os.makedirs(transfer_local_path, exist_ok=True)
 
     _rclone_transfer(
         remote_name=remote_name.lower(),
-        src=effective_remote_path,
-        dst=effective_local_path,
+        src=transfer_remote_path,
+        dst=transfer_local_path,
         src_kind="remote",
         action="pull",
         operation=operation,

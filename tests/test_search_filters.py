@@ -42,9 +42,45 @@ def test_push_search_passes_include_pattern_without_changing_source(monkeypatch)
         search_pattern="/data/**/*.parquet",
     )
 
+    assert captured["src"].replace("\\", "/") == "/work/myproject/data"
+    assert captured["dst"] == "dropbox-main:rclone-backup/myproject/data"
+    assert captured["include_patterns"] == ["**/*.parquet"]
+
+
+def test_push_accepts_remote_path_without_remote_prefix(monkeypatch):
+    from repokit_backup import rclone
+
+    captured = {}
+
+    monkeypatch.setattr(rclone, "install_rclone", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        rclone,
+        "load_registry",
+        lambda *_args, **_kwargs: ("dropbox-main:rclone-backup/myproject", "/work/myproject"),
+    )
+    monkeypatch.setattr(
+        rclone,
+        "load_all_registry",
+        lambda *_args, **_kwargs: {
+            "dropbox-main": {
+                "remote_path": "dropbox-main:rclone-backup/myproject",
+                "local_path": "/work/myproject",
+                "push_policy": "full",
+            }
+        },
+    )
+    monkeypatch.setattr(rclone, "_exclude_patterns", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rclone, "_nested_remote_excludes", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(rclone, "_rclone_transfer", lambda **kwargs: captured.update(kwargs))
+
+    rclone.push_rclone(
+        remote_name="dropbox-main",
+        new_path="/Team Folder - (LIB)",
+        operation="copy",
+    )
+
     assert captured["src"] == "/work/myproject"
-    assert captured["dst"] == "dropbox-main:rclone-backup/myproject"
-    assert captured["include_patterns"] == ["data/**/*.parquet"]
+    assert captured["dst"] == "dropbox-main:/Team Folder - (LIB)"
 
 
 def test_pull_search_passes_include_pattern_with_remote_root_fallback(monkeypatch, capsys):
@@ -68,6 +104,6 @@ def test_pull_search_passes_include_pattern_with_remote_root_fallback(monkeypatc
 
     out = capsys.readouterr().out
     assert "Defaulting pull source to remote root" in out
-    assert captured["src"] == "dropbox-main:"
-    assert captured["dst"] == "/tmp/restore"
-    assert captured["include_patterns"] == ["data/**/*.parquet"]
+    assert captured["src"] == "dropbox-main:/data"
+    assert captured["dst"].replace("\\", "/") == "/tmp/restore/data"
+    assert captured["include_patterns"] == ["**/*.parquet"]
