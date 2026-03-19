@@ -621,14 +621,24 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
 def list_remotes():
     """List all configured remotes and their status."""
     print("\n[REMOTES] Rclone Remotes:")
-    try:
-        result = subprocess.run(
-            _rclone_cmd("listremotes"), check=True, stdout=subprocess.PIPE, timeout=DEFAULT_TIMEOUT
-        )
-        rclone_configured = set(r.rstrip(":") for r in result.stdout.decode().splitlines())
-    except Exception as e:
-        print(f"Failed to list remotes: {e}")
-        rclone_configured = set()
+    default_cfg_remotes = _list_rclone_remotes()
+    ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
+    ucloud_cfg_remotes = _list_rclone_remotes(ucloud_conf) if ucloud_conf.exists() else set()
+    rclone_configured = default_cfg_remotes | ucloud_cfg_remotes
+
+    if not rclone_configured:
+        print("  No remotes configured.")
+    else:
+        all_remotes = load_all_registry()
+        for remote in sorted(rclone_configured):
+            meta = all_remotes.get(remote, {})
+            if isinstance(meta, dict) and meta.get("remote_path"):
+                mapping_note = "[mapped]"
+            elif remote in all_remotes:
+                mapping_note = "[registered]"
+            else:
+                mapping_note = "[unmapped]"
+            print(f"  - {remote} {mapping_note}")
 
     print("\n[FOLDERS] Mapped Backup Folders:")
     all_remotes = load_all_registry()
@@ -638,9 +648,9 @@ def list_remotes():
         for remote, meta in all_remotes.items():
             remote_path = meta.get("remote_path") if isinstance(meta, dict) else meta
             local_path = (
-                meta.get("local_path", "Not specified")
+                meta.get("local_path")
                 if isinstance(meta, dict)
-                else "Not specified"
+                else None
             )
             remote_type = (
                 meta.get("remote_type", "unknown") if isinstance(meta, dict) else "unknown"
@@ -654,8 +664,8 @@ def list_remotes():
             status = meta.get("status") if isinstance(meta, dict) else "-"
             status_note = "[OK]" if remote in rclone_configured else "[WARN] missing in rclone config"
             print(f"  - {remote} ({remote_type}):")
-            print(f"      Remote: {remote_path}")
-            print(f"      Local:  {local_path}")
+            print(f"      Remote: {remote_path or 'Not mapped'}")
+            print(f"      Local:  {local_path or 'Not mapped'}")
             print(f"      Policy: {push_policy}")
             print(
                 f"      Action: {action} | Operation: {operation} | Timestamp: {timestamp} | Status: {status} {status_note}"
@@ -699,6 +709,13 @@ def setup_rclone(
             print(f"Aborting setup for '{remote_name}' because remote creation failed.")
             return
         if base_folder is None:
+            save_registry(
+                remote_name.lower(),
+                None,
+                None,
+                backend or "sftp",
+                push_policy="full",
+            )
             print(
                 f"Remote '{remote_name.lower()}' configured without a saved path mapping. "
                 "Use explicit paths for push/pull, or add a mapping later."

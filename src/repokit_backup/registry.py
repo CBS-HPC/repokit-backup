@@ -51,8 +51,8 @@ def load_registry(
 
 def save_registry(
     remote_name: str,
-    folder_path: str,
-    local_backup_path: str,
+    folder_path: str | None,
+    local_backup_path: str | None,
     remote_type: str,
     push_policy: str = "full",
     json_path: str = "./bin/rclone_remote.json",
@@ -68,18 +68,21 @@ def save_registry(
                 print("Warning: JSON file was corrupted or empty, reinitializing.")
 
     data[remote_name] = {
-        "remote_path": f"{remote_name}:{folder_path}",
+        "remote_path": f"{remote_name}:{folder_path}" if folder_path else None,
         "local_path": local_backup_path,
         "remote_type": remote_type,
         "push_policy": push_policy,
         "last_action": None,
         "last_operation": None,
         "timestamp": None,
-        "status": "initialized",
+        "status": "initialized" if folder_path and local_backup_path else "configured",
     }
     _atomic_write_json(json_path, data)
-    print(f"Saved rclone path ({folder_path}) for '{remote_name}' to {json_path}")
-    print(f"Local backup source: {local_backup_path}")
+    if folder_path and local_backup_path:
+        print(f"Saved rclone path ({folder_path}) for '{remote_name}' to {json_path}")
+        print(f"Local backup source: {local_backup_path}")
+    else:
+        print(f"Saved remote '{remote_name}' without a path mapping to {json_path}")
     print(f"Remote type: {remote_type}")
     print(f"Push policy: {push_policy}")
 

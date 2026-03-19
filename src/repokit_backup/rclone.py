@@ -222,6 +222,16 @@ def _remote_root(remote_name: str) -> str:
     return f"{(remote_name or '').strip().lower()}:"
 
 
+def _list_target_path(remote_name: str, remote_path: str | None, sub_path: str = "") -> str:
+    normalized = (sub_path or "").strip().replace("\\", "/")
+    base_remote = remote_path if remote_path else _remote_root(remote_name)
+    if normalized in {"", ".", "/"}:
+        return base_remote
+    if remote_path:
+        return _join_remote_path(base_remote, normalized.lstrip("/"))
+    return f"{_remote_root(remote_name)}{normalized}"
+
+
 def _normalize_search_pattern(search_pattern: str | None) -> tuple[str | None, bool]:
     pattern = (search_pattern or "").strip().replace("\\", "/")
     if not pattern:
@@ -695,11 +705,10 @@ def list_remote_entries(
     """
     remote_name = (remote_name or "").strip().lower()
     remote_path, _ = load_registry(remote_name)
-    base_remote = remote_path if remote_path else _remote_root(remote_name)
     if not remote_path:
         print(f"No mapped path for '{remote_name}'. Listing remote root.")
 
-    target, _ = _select_source_path(base_remote, "remote", sub_path)
+    target = _list_target_path(remote_name, remote_path, sub_path)
     normalized_search, anchored_to_root = _normalize_search_pattern(search_pattern)
     if normalized_search:
         target = _remote_root(remote_name) if anchored_to_root else target

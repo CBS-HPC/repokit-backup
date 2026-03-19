@@ -23,12 +23,22 @@ def test_setup_rclone_skips_add_folder_when_mapping_is_skipped(
     monkeypatch.setattr(remotes, "_add_remote", lambda *args, **kwargs: True)
 
     add_folder_calls: list[tuple] = []
+    save_registry_calls: list[tuple] = []
     monkeypatch.setattr(
         remotes,
         "_add_folder",
         lambda *args, **kwargs: add_folder_calls.append((args, kwargs)),
     )
+    monkeypatch.setattr(
+        remotes,
+        "save_registry",
+        lambda *args, **kwargs: save_registry_calls.append((args, kwargs)),
+    )
 
     remotes.setup_rclone("dropbox-main", backend="dropbox")
 
     assert add_folder_calls == []
+    assert len(save_registry_calls) == 1
+    args, kwargs = save_registry_calls[0]
+    assert args[:4] == ("dropbox-main", None, None, "dropbox")
+    assert kwargs["push_policy"] == "full"

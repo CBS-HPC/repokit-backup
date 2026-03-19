@@ -39,7 +39,23 @@ def test_ls_defaults_to_remote_root_with_subpath_without_mapping(monkeypatch):
     monkeypatch.setattr(rclone.subprocess, "run", fake_run)
 
     rclone.list_remote_entries("dropbox", "/data")
-    assert captured["cmd"][2] == "dropbox:data"
+    assert captured["cmd"][2] == "dropbox:/data"
+
+
+def test_ls_preserves_leading_slash_for_unmapped_remote_subpath(monkeypatch):
+    from repokit_backup import rclone
+
+    captured = {}
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rclone, "load_registry", lambda *_args, **_kwargs: (None, None))
+    monkeypatch.setattr(rclone.subprocess, "run", fake_run)
+
+    rclone.list_remote_entries("test", "/Team Folder - (LIB)")
+    assert captured["cmd"][2] == "test:/Team Folder - (LIB)"
 
 
 def test_ls_search_relative_pattern_uses_scoped_target(monkeypatch):
