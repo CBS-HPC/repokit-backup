@@ -22,6 +22,8 @@ keywords = [
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
 ]
@@ -29,7 +31,7 @@ dependencies = [
     "requests",
     "repokit-common",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 
 [project.license]
 file = "LICENSE"
@@ -53,7 +55,7 @@ repokit-backup = "repokit_backup.cli:main"
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 
 [tool.setuptools.packages.find]
 where = [
@@ -61,7 +63,7 @@ where = [
 ]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = true
 disallow_untyped_defs = false
