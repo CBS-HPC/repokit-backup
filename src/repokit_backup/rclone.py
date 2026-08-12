@@ -7,7 +7,14 @@ import glob
 import requests
 
 import repokit_common
-from repokit_common import toml_ignore, exe_to_path, is_installed, toml_dataset_path, load_from_env, save_to_env
+from repokit_common import (
+    toml_ignore,
+    exe_to_path,
+    is_installed,
+    toml_dataset_path,
+    load_from_env,
+    save_to_env,
+)
 
 try:
     from repokit.vcs import rclone_commit
@@ -23,6 +30,21 @@ DEFAULT_DATASET_PATH, _ = toml_dataset_path()
 
 def _project_root() -> pathlib.Path:
     return pathlib.Path(repokit_common.PROJECT_ROOT).resolve()
+
+
+def _remote_name_from_uri(path: str) -> str:
+    """Return the rclone alias portion of a remote URI, if present."""
+    return str(path or "").partition(":")[0].strip().lower()
+
+
+def _is_ucloud_remote(remote_name: str, registry: dict | None = None) -> bool:
+    """Determine UCloud membership from registry metadata, with legacy alias fallback."""
+    key = (remote_name or "").strip().lower()
+    registry = registry if registry is not None else load_all_registry()
+    meta = registry.get(key, {}) if isinstance(registry, dict) else {}
+    return key.startswith("ucloud") or (
+        isinstance(meta, dict) and meta.get("remote_type") == "ucloud"
+    )
 
 
 def _rc_verbose_args(level: int) -> list[str]:
@@ -170,12 +192,16 @@ def _rclone_transfer(
         print(f"Error: The folder '{src}' does not exist.")
         return
 
-    command = ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + include_args + exclude_args
+    command = (
+        ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + include_args + exclude_args
+    )
 
     # Use ucloud config if applicable
-    if remote_name.lower().startswith("ucloud") or str(src).startswith("ucloud:") or str(
-        dst
-    ).startswith("ucloud:"):
+    if (
+        _is_ucloud_remote(remote_name)
+        or _is_ucloud_remote(_remote_name_from_uri(str(src)))
+        or _is_ucloud_remote(_remote_name_from_uri(str(dst)))
+    ):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
             command += ["--config", str(rclone_conf)]
@@ -312,13 +338,19 @@ def _search_prefix_and_remainder(search_pattern: str | None) -> tuple[str, str, 
     if first_wildcard_idx == 0:
         return "", stripped, anchored_to_root
 
-    return "/".join(parts[:first_wildcard_idx]), "/".join(parts[first_wildcard_idx:]), anchored_to_root
+    return (
+        "/".join(parts[:first_wildcard_idx]),
+        "/".join(parts[first_wildcard_idx:]),
+        anchored_to_root,
+    )
 
 
 def _join_local_path(base_path: str, sub_path: str) -> str:
     if not sub_path:
         return base_path
-    return str(pathlib.Path(base_path) / pathlib.Path(*[part for part in sub_path.split("/") if part]))
+    return str(
+        pathlib.Path(base_path) / pathlib.Path(*[part for part in sub_path.split("/") if part])
+    )
 
 
 def _resolve_transfer_search(
@@ -369,7 +401,7 @@ def _select_source_path(src: str, src_kind: str, select_path: str | None) -> tup
 
 
 def _parse_selection_indices(raw: str, max_index: int) -> list[int]:
-    selected = set()
+    selected: set[int] = set()
     chunks = [part.strip() for part in (raw or "").split(",") if part.strip()]
     if not chunks:
         return []
@@ -406,7 +438,7 @@ def _list_top_level_entries(src: str, src_kind: str, remote_name: str) -> list[s
         return entries
 
     cmd = ["rclone", "lsf", src, "--max-depth", "1"]
-    if remote_name.lower().startswith("ucloud") or str(src).startswith("ucloud:"):
+    if _is_ucloud_remote(remote_name) or _is_ucloud_remote(_remote_name_from_uri(str(src))):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
             cmd += ["--config", str(rclone_conf)]
@@ -489,7 +521,9 @@ def _select_include_patterns(
 
     # Root selection remains interactive.
     if normalized == "":
-        return _interactive_include_patterns(selection_src, src_kind, remote_name, include_prefix="")
+        return _interactive_include_patterns(
+            selection_src, src_kind, remote_name, include_prefix=""
+        )
 
     entries = _list_top_level_entries(selection_src, src_kind, remote_name)
     if entries:
@@ -506,6 +540,16 @@ def _select_include_patterns(
         print(f"Using direct selection pattern: {pattern}")
         return [pattern]
     return []
+
+
+def _resolve_local_source_path(path: str | None) -> str | None:
+    """Resolve an explicit push source relative to the project root."""
+    if path is None:
+        return None
+    candidate = pathlib.Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = _project_root() / candidate
+    return str(candidate.resolve())
 
 
 def _exclude_patterns(local_path: str) -> list[str]:
@@ -561,6 +605,7 @@ def _nested_remote_excludes(remote_name: str, local_path: str, registry: dict) -
 def push_rclone(
     remote_name: str,
     new_path: str = None,
+    local_path: str | None = None,
     operation: str = "sync",
     dry_run: bool = False,
     verbose: int = 0,
@@ -574,7 +619,10 @@ def push_rclone(
         return
 
     if remote_name.lower() == "all":
-        all_remotes = load_all_registry().keys()
+        if new_path is not None or local_path is not None:
+            print("Error: --path and --remote-path cannot be used with --remote all.")
+            return
+        all_remotes = list(load_all_registry().keys())
     else:
         all_remotes = [remote_name]
 
@@ -599,39 +647,47 @@ def push_rclone(
             continue
 
         _remote_path, _local_path = load_registry(remote_key)
-        if not _remote_path:
-            print(
-                f"Remote has not been configured or not found in registry. "
-                f"Run 'backup add --remote {remote_name}' first."
-            )
-            continue
-
+        effective_local_path = _resolve_local_source_path(local_path) or _local_path
         target_path = (
             _normalize_explicit_remote_path(remote_key, new_path)
             if new_path is not None
             else _remote_path
         )
+        if not target_path:
+            print(
+                f"Remote '{remote_name}' has no saved remote path. "
+                "Provide --remote-path or pin a remote base first."
+            )
+            continue
+        if not effective_local_path:
+            print(
+                f"Remote '{remote_name}' has no saved local source. "
+                "Provide --path or create a full mapping."
+            )
+            continue
         if rclone_commit:
             flag = rclone_commit(
-                _local_path, flag, msg=f"Rclone Push from {_local_path} to {target_path}"
+                effective_local_path,
+                flag,
+                msg=f"Rclone Push from {effective_local_path} to {target_path}",
             )
-        exclude_patterns = _exclude_patterns(_local_path)
-        exclude_patterns += _nested_remote_excludes(remote_key, _local_path, registry)
+        exclude_patterns = _exclude_patterns(effective_local_path)
+        exclude_patterns += _nested_remote_excludes(remote_key, effective_local_path, registry)
         exclude_patterns = sorted(set(exclude_patterns))
-        transfer_src = _local_path
+        transfer_src = effective_local_path
         transfer_dst = target_path
-        include_patterns = []
+        include_patterns: list[str] = []
         if search_pattern:
             transfer_src, transfer_dst, include_patterns = _resolve_transfer_search(
                 remote_name=remote_key,
-                src=_local_path,
+                src=effective_local_path,
                 dst=target_path,
                 src_kind="local",
                 search_pattern=search_pattern,
             )
         if select_path is not None:
             selected = _select_include_patterns(
-                _local_path,
+                effective_local_path,
                 "local",
                 remote_name.lower(),
                 select_path,
@@ -693,21 +749,21 @@ def pull_rclone(
         operation = "copy"
 
     explicit_remote_path = _normalize_explicit_remote_path(remote_name.lower(), remote_path)
-    has_mapping = bool(_remote_path and _local_path)
+    has_full_mapping = bool(_remote_path and _local_path)
     effective_remote_path = explicit_remote_path or _remote_path
     effective_local_path = new_path or _local_path
 
-    if not has_mapping:
+    if not has_full_mapping:
         if not new_path:
             print(
-                f"Remote '{remote_name}' has no saved mapping. "
+                f"Remote '{remote_name}' has no saved mapping with a local path. "
                 "Provide --path for pull destination."
             )
             return
-        if not remote_path:
+        if not effective_remote_path:
             effective_remote_path = f"{remote_name.lower()}:"
             print(
-                f"Remote '{remote_name}' has no saved mapping. "
+                f"Remote '{remote_name}' has no saved remote path. "
                 f"Defaulting pull source to remote root '{effective_remote_path}'."
             )
 
@@ -727,13 +783,15 @@ def pull_rclone(
             msg=f"Rclone Pull from {effective_remote_path} to {effective_local_path}",
         )
     exclude_patterns = []
-    if _local_path:
-        exclude_patterns = _exclude_patterns(_local_path)
-        exclude_patterns += _nested_remote_excludes(remote_name.lower(), _local_path, registry)
+    if effective_local_path:
+        exclude_patterns = _exclude_patterns(effective_local_path)
+        exclude_patterns += _nested_remote_excludes(
+            remote_name.lower(), effective_local_path, registry
+        )
     exclude_patterns = sorted(set(exclude_patterns))
     transfer_remote_path = effective_remote_path
     transfer_local_path = effective_local_path
-    include_patterns = []
+    include_patterns: list[str] = []
     if search_pattern:
         transfer_remote_path, transfer_local_path, include_patterns = _resolve_transfer_search(
             remote_name=remote_name.lower(),
@@ -783,13 +841,11 @@ def rclone_diff_report(local_path: str, remote_path: str):
     cmd = ["rclone", "diff"]
 
     # Handle ucloud remote
-    if remote_path.startswith("ucloud:"):
+    if _is_ucloud_remote(_remote_name_from_uri(remote_path)):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if not rclone_conf.exists():
             print("⚠️ ucloud rclone config not found in ./bin. Cannot run diff.")
             return
-        # Strip "ucloud:" prefix and make path absolute
-        remote_path = "/" + remote_path[len("ucloud:") :].lstrip("/")
         cmd += ["--config", str(rclone_conf)]
 
     cmd += [
@@ -853,7 +909,7 @@ def list_remote_entries(
     else:
         cmd = ["rclone", "lsf", target, "--max-depth", "1"]
 
-    if remote_name.startswith("ucloud") or str(target).startswith("ucloud:"):
+    if _is_ucloud_remote(remote_name) or _is_ucloud_remote(_remote_name_from_uri(str(target))):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
             cmd += ["--config", str(rclone_conf)]

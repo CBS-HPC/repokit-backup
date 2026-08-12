@@ -8,15 +8,69 @@ import pathlib
 from datetime import datetime
 
 
-def _atomic_write_json(path: str, data: dict):
+MAPPING_MODES = {"full", "remote-only", "none"}
+PATH_OWNERSHIPS = {"managed", "external", "none"}
+
+
+def _atomic_write_json(path: str | os.PathLike[str], data: dict) -> None:
     """Atomically write JSON to avoid corruption."""
-    path = pathlib.Path(path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    path_obj = pathlib.Path(path)
+    tmp = path_obj.with_suffix(path_obj.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
-    tmp.replace(path)
+    tmp.replace(path_obj)
+
+
+def _read_registry_data(json_path: str) -> dict:
+    """Read the registry file, returning an empty mapping when it is unavailable."""
+    if not os.path.exists(json_path):
+        return {}
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _remote_uri(remote_name: str, folder_path: str | None) -> str | None:
+    """Return a remote URI while preserving a meaningful leading slash."""
+    if folder_path is None:
+        return None
+
+    value = str(folder_path).strip().replace("\\", "/")
+    if not value:
+        return None
+
+    remote_key = remote_name.strip().lower()
+    if ":" in value:
+        uri_remote, _, _ = value.partition(":")
+        if uri_remote.strip().lower() != remote_key:
+            raise ValueError(
+                f"Remote path '{folder_path}' belongs to '{uri_remote}', not '{remote_name}'."
+            )
+        return value
+    return f"{remote_key}:{value}"
+
+
+def _mapping_mode(remote_path: str | None, local_path: str | None, requested: str | None) -> str:
+    if requested is not None:
+        if requested not in MAPPING_MODES:
+            raise ValueError(f"Unknown mapping mode '{requested}'.")
+        if requested == "full" and (not remote_path or not local_path):
+            raise ValueError("A full mapping requires both remote and local paths.")
+        if requested == "remote-only" and not remote_path:
+            raise ValueError("A remote-only mapping requires a remote path.")
+        if requested == "none" and (remote_path or local_path):
+            raise ValueError("A mapping mode of 'none' cannot include paths.")
+        return requested
+    if remote_path and local_path:
+        return "full"
+    if remote_path:
+        return "remote-only"
+    return "none"
 
 
 def load_registry(
@@ -55,47 +109,98 @@ def save_registry(
     local_backup_path: str | None,
     remote_type: str,
     push_policy: str = "full",
+    mapping_mode: str | None = None,
+    path_ownership: str | None = None,
     json_path: str = "./bin/rclone_remote.json",
-):
+) -> None:
     """Save remote configuration to registry."""
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
-    data = {}
-    if os.path.exists(json_path):
-        with open(json_path) as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                print("Warning: JSON file was corrupted or empty, reinitializing.")
+    data = _read_registry_data(json_path)
+    if os.path.exists(json_path) and not data:
+        print("Warning: JSON file was corrupted or empty, reinitializing.")
 
-    data[remote_name] = {
-        "remote_path": f"{remote_name}:{folder_path}" if folder_path else None,
+    remote_key = remote_name.strip().lower()
+    remote_path = _remote_uri(remote_key, folder_path)
+    resolved_mode = _mapping_mode(remote_path, local_backup_path, mapping_mode)
+    if path_ownership is None:
+        path_ownership = "external" if resolved_mode == "remote-only" else "managed"
+    if path_ownership not in PATH_OWNERSHIPS:
+        raise ValueError(f"Unknown remote path ownership '{path_ownership}'.")
+    if not remote_path:
+        path_ownership = "none"
+
+    previous = data.get(remote_key, {})
+    if not isinstance(previous, dict):
+        previous = {}
+    data[remote_key] = {
+        "remote_path": remote_path,
         "local_path": local_backup_path,
         "remote_type": remote_type,
         "push_policy": push_policy,
-        "last_action": None,
-        "last_operation": None,
-        "timestamp": None,
-        "status": "initialized" if folder_path and local_backup_path else "configured",
+        "mapping_mode": resolved_mode,
+        "remote_path_ownership": path_ownership,
+        "last_action": previous.get("last_action"),
+        "last_operation": previous.get("last_operation"),
+        "timestamp": previous.get("timestamp"),
+        "status": "initialized"
+        if resolved_mode == "full"
+        else "pinned"
+        if remote_path
+        else "configured",
     }
     _atomic_write_json(json_path, data)
-    if folder_path and local_backup_path:
-        print(f"Saved rclone path ({folder_path}) for '{remote_name}' to {json_path}")
+    if resolved_mode == "full":
+        print(f"Saved rclone path ({folder_path}) for '{remote_key}' to {json_path}")
         print(f"Local backup source: {local_backup_path}")
+    elif resolved_mode == "remote-only":
+        print(f"Pinned remote path ({remote_path}) for '{remote_key}' to {json_path}")
     else:
-        print(f"Saved remote '{remote_name}' without a path mapping to {json_path}")
+        print(f"Saved remote '{remote_key}' without a path mapping to {json_path}")
     print(f"Remote type: {remote_type}")
     print(f"Push policy: {push_policy}")
 
 
 def load_all_registry(json_path: str = "./bin/rclone_remote.json") -> dict:
     """Load entire registry."""
-    if not os.path.exists(json_path):
-        return {}
-    try:
-        with open(json_path) as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return _read_registry_data(json_path)
+
+
+def set_remote_pin(
+    remote_name: str,
+    remote_path: str | None,
+    json_path: str = "./bin/rclone_remote.json",
+) -> bool:
+    """Pin or clear a remote base without retaining a local path mapping."""
+    data = _read_registry_data(json_path)
+    remote_key = (remote_name or "").strip().lower()
+    entry = data.get(remote_key)
+    if not isinstance(entry, dict):
+        print(f"Remote '{remote_name}' is not registered. Run `repokit-backup add` first.")
+        return False
+
+    current_mode = _mapping_mode(
+        entry.get("remote_path"), entry.get("local_path"), entry.get("mapping_mode")
+    )
+    if current_mode == "full":
+        print(
+            f"Remote '{remote_name}' has a full local/remote mapping. "
+            "`pin` only manages remote-only mappings and will not discard it."
+        )
+        return False
+
+    normalized_path = _remote_uri(remote_key, remote_path)
+    entry["remote_path"] = normalized_path
+    entry["local_path"] = None
+    entry["mapping_mode"] = "remote-only" if normalized_path else "none"
+    entry["remote_path_ownership"] = "external" if normalized_path else "none"
+    entry["status"] = "pinned" if normalized_path else "configured"
+    _atomic_write_json(json_path, data)
+
+    if normalized_path:
+        print(f"Pinned remote path for '{remote_key}': {normalized_path}")
+    else:
+        print(f"Cleared saved paths for '{remote_key}'.")
+    return True
 
 
 def update_sync_status(

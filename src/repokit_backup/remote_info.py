@@ -15,9 +15,11 @@ def ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> st
     if not folder.endswith(repo):
         add_suffix = True
         try:
-            reply = input(
-                f"Add project name suffix '{repo}' to remote folder path? [Y/n]: "
-            ).strip().lower()
+            reply = (
+                input(f"Add project name suffix '{repo}' to remote folder path? [Y/n]: ")
+                .strip()
+                .lower()
+            )
             if reply in {"n", "no"}:
                 add_suffix = False
         except EOFError:
@@ -70,6 +72,137 @@ def _prompt_non_empty(prompt: str, secret: bool = False, default: str = "") -> s
         if value:
             return value
         print("Value is required.")
+
+
+def _resolve_non_interactive_value(
+    explicit: str | None,
+    env_key: str,
+    label: str,
+    *,
+    default: str = "",
+    required: bool = True,
+) -> str:
+    """Resolve a non-secret setting without ever prompting for input."""
+    value = (explicit or load_from_env(env_key) or default or "").strip()
+    if required and not value:
+        raise ValueError(f"{label} is required with --non-interactive (use its flag or {env_key}).")
+    if explicit and value:
+        save_to_env(value, env_key)
+    return value
+
+
+def _resolve_non_interactive_key(
+    explicit_key_path: str | None,
+    env_key: str,
+    label: str,
+    *,
+    use_ssh_agent: bool,
+) -> str:
+    """Resolve an SSH key path or require an explicit agent choice."""
+    if use_ssh_agent:
+        return ""
+
+    key_path = (explicit_key_path or detect_existing_ssh_key(env_key, "SSH_PATH") or "").strip()
+    if not key_path:
+        raise ValueError(
+            f"{label} is required with --non-interactive. Use --ssh-key-path or --use-ssh-agent."
+        )
+    expanded = str(pathlib.Path(key_path).expanduser())
+    if not pathlib.Path(expanded).is_file():
+        raise ValueError(f"{label} file not found: {expanded}")
+    if explicit_key_path:
+        save_to_env(expanded, env_key)
+    return expanded
+
+
+def non_interactive_remote_info(
+    backend: str,
+    *,
+    lumio_project_id: str | None = None,
+    lumio_access_key: str | None = None,
+    lumio_secret_key: str | None = None,
+    lumip_project_id: str | None = None,
+    lumip_username: str | None = None,
+    erda_username: str | None = None,
+    erda_password: str | None = None,
+    ssh_key_path: str | None = None,
+    use_ssh_agent: bool = False,
+    ucloud_port: str | None = None,
+) -> tuple[str | None, str | None, dict[str, str | bool]]:
+    """Resolve backend credentials for `add --non-interactive` without prompts."""
+    backend = (backend or "").strip().lower()
+    options: dict[str, str | bool] = {"use_ssh_agent": use_ssh_agent}
+
+    if backend == "lumio":
+        project_id = _resolve_non_interactive_value(
+            lumio_project_id, "LUMIO_PROJECT_ID", "LUMI-O project id"
+        )
+        access_key = _resolve_non_interactive_value(
+            lumio_access_key, "LUMIO_ACCESS_KEY", "LUMI-O access key"
+        )
+        secret_key = _resolve_non_interactive_value(
+            lumio_secret_key, "LUMIO_SECRET_KEY", "LUMI-O secret key"
+        )
+        options["lumio_project_id"] = project_id
+        return access_key, secret_key, options
+
+    if backend == "lumip":
+        project_id = _resolve_non_interactive_value(
+            lumip_project_id, "LUMIP_PROJECT_ID", "LUMI project id"
+        )
+        username = _resolve_non_interactive_value(
+            lumip_username,
+            "LUMIP_USERNAME",
+            "LUMI username",
+            default=getpass.getuser(),
+        )
+        options["lumip_project_id"] = project_id
+        options["ssh_key_path"] = _resolve_non_interactive_key(
+            ssh_key_path,
+            "LUMIP_SSH_KEY_PATH",
+            "LUMI SSH private key",
+            use_ssh_agent=use_ssh_agent,
+        )
+        return username, None, options
+
+    if backend == "ucloud":
+        port = _resolve_non_interactive_value(
+            ucloud_port,
+            "UCLOUD_PORT",
+            "UCloud SSH port",
+            default="22",
+        )
+        if not port.isdigit() or not (1 <= int(port) <= 65535):
+            raise ValueError("UCloud SSH port must be an integer in range 1-65535.")
+        options["ucloud_port"] = port
+        options["ssh_key_path"] = _resolve_non_interactive_key(
+            ssh_key_path,
+            "UCLOUD_SSH_KEY_PATH",
+            "UCloud SSH private key",
+            use_ssh_agent=use_ssh_agent,
+        )
+        return "ucloud", None, options
+
+    if backend == "erda":
+        username = _resolve_non_interactive_value(erda_username, "ERDA_USERNAME", "ERDA username")
+        password = _resolve_non_interactive_value(
+            erda_password,
+            "ERDA_PASSWORD",
+            "ERDA password",
+            required=False,
+        )
+        if password:
+            options["erda_auth"] = "password"
+            return username, password, options
+        if use_ssh_agent:
+            options["erda_auth"] = "agent"
+            return username, None, options
+        raise ValueError(
+            "ERDA authentication is required with --non-interactive. "
+            "Use --erda-password-file or --use-ssh-agent."
+        )
+
+    return None, None, options
 
 
 def _validate_lumip_base_path(path: str, expected_prefix: str | None = None) -> str:
@@ -131,12 +264,16 @@ def _lumio_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
     default_base = (load_from_env("LUMIO_DEFAULT_BASE") or f"rclone-backup/{repo_name}").strip()
 
     if project_id_default:
-        project_id = input(f"LUMI-O project id [{project_id_default}]: ").strip() or project_id_default
+        project_id = (
+            input(f"LUMI-O project id [{project_id_default}]: ").strip() or project_id_default
+        )
     else:
         project_id = _prompt_non_empty("LUMI-O project id: ")
 
     if access_key_default:
-        access_key = input(f"LUMI-O access key [{access_key_default}]: ").strip() or access_key_default
+        access_key = (
+            input(f"LUMI-O access key [{access_key_default}]: ").strip() or access_key_default
+        )
     else:
         access_key = _prompt_non_empty("LUMI-O access key: ")
 
@@ -162,7 +299,9 @@ def _lumio_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
 def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.Path):
     project_default = (load_from_env("LUMIP_PROJECT_ID") or "").strip()
     user_default = (load_from_env("LUMIP_USERNAME") or getpass.getuser()).strip()
-    base_default = (load_from_env("LUMIP_BASE_PATH") or f"/scratch/{project_default or 'PROJECT_ID'}").strip()
+    base_default = (
+        load_from_env("LUMIP_BASE_PATH") or f"/scratch/{project_default or 'PROJECT_ID'}"
+    ).strip()
     ssh_key_default = detect_existing_ssh_key("LUMIP_SSH_KEY_PATH", "SSH_PATH")
 
     if project_default:
@@ -176,9 +315,7 @@ def _lumip_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
         ssh_prompt = f"LUMI SSH private key [{ssh_key_default}] (leave empty to use default): "
         ssh_key_path = input(ssh_prompt).strip() or ssh_key_default
     else:
-        ssh_key_path = input(
-            "LUMI SSH private key (leave empty to use ssh-agent): "
-        ).strip()
+        ssh_key_path = input("LUMI SSH private key (leave empty to use ssh-agent): ").strip()
 
     ssh_key_path = str(pathlib.Path(ssh_key_path).expanduser()) if ssh_key_path else ""
     if ssh_key_path:
@@ -213,7 +350,9 @@ def _local_remote_info(remote_name: str, repo_name: str, project_root: pathlib.P
         print("[INFO] Remote configured without a saved path mapping.")
         return remote_name, None, None, None
 
-    base_folder = input("Please enter the local path for rclone: ").strip().replace("'", "").replace('"', "")
+    base_folder = (
+        input("Please enter the local path for rclone: ").strip().replace("'", "").replace('"', "")
+    )
     base_folder = check_path_format(base_folder)
     if not os.path.isdir(base_folder):
         print(f"Error: The specified local path does not exist: {base_folder}")
@@ -256,4 +395,3 @@ def remote_user_info(
     }
     handler = handlers.get(backend, _generic_remote_info)
     return handler(remote_name, repo_name, project_root)
-

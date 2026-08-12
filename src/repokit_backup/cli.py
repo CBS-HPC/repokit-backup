@@ -10,7 +10,7 @@ import sys
 
 import repokit_common
 from repokit_common.base import project_root as detect_project_root
-from .remote_types import CANONICAL_BACKENDS, normalize_backend, resolve_backend
+from .remote_types import CANONICAL_BACKENDS, normalize_backend
 
 # from ..common import ensure_correct_kernel
 
@@ -58,12 +58,15 @@ def _ensure_rcloneignore_pyproject_config() -> None:
         "patterns": ["bin/", ".venv/", ".conda/"],
     }
 
-    current = repokit_common.read_toml(
-        folder=str(repokit_common.PROJECT_ROOT),
-        json_filename=repokit_common.JSON_FILENAME,
-        tool_name="rcloneignore",
-        toml_path=repokit_common.TOML_PATH,
-    ) or {}
+    current = (
+        repokit_common.read_toml(
+            folder=str(repokit_common.PROJECT_ROOT),
+            json_filename=repokit_common.JSON_FILENAME,
+            tool_name="rcloneignore",
+            toml_path=repokit_common.TOML_PATH,
+        )
+        or {}
+    )
 
     patterns = current.get("patterns", [])
     if isinstance(patterns, str):
@@ -106,8 +109,84 @@ def _bootstrap_project_runtime(install_rclone_fn) -> tuple[pathlib.Path, pathlib
     if not install_rclone_fn("./bin"):
         raise RuntimeError("Error: rclone installation/verification failed.")
     bin_dir = (repokit_common.PROJECT_ROOT / pathlib.Path("./bin")).resolve()
-    pyproject_path = (repokit_common.PROJECT_ROOT / pathlib.Path(repokit_common.TOML_PATH)).resolve()
+    pyproject_path = (
+        repokit_common.PROJECT_ROOT / pathlib.Path(repokit_common.TOML_PATH)
+    ).resolve()
     return bin_dir, pyproject_path
+
+
+def _read_secret_file(path_value: str | None, label: str) -> str | None:
+    """Read a required non-empty secret from a local file without echoing it."""
+    if not path_value:
+        return None
+    path = pathlib.Path(path_value).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"{label} file not found: {path}")
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        raise ValueError(f"{label} file is empty: {path}")
+    return value
+
+
+def _load_rclone_options(path_value: str | None) -> dict[str, str] | None:
+    """Load flat rclone config options for a generic non-interactive backend."""
+    if not path_value:
+        return None
+    path = pathlib.Path(path_value).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"Rclone options file not found: {path}")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Rclone options file is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("Rclone options file must contain a non-empty JSON object.")
+
+    options: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip() or not key.replace("_", "").isalnum():
+            raise ValueError(
+                "Rclone option names must contain only letters, digits, and underscores."
+            )
+        if isinstance(value, bool):
+            options[key] = "true" if value else "false"
+        elif isinstance(value, (str, int, float)):
+            options[key] = str(value)
+        else:
+            raise ValueError(f"Rclone option '{key}' must have a scalar JSON value.")
+    return options
+
+
+def _validate_non_interactive_add(args, local_path: str | None) -> None:
+    """Ensure `add --non-interactive` has every decision that would otherwise prompt."""
+    mapping_mode = getattr(args, "mapping_mode", None)
+    if mapping_mode is None:
+        raise ValueError("--mapping is required with --non-interactive.")
+    remote_path = getattr(args, "add_remote_path", None)
+    policy = getattr(args, "add_policy", None)
+    if getattr(args, "ssh_mode", False):
+        raise ValueError(
+            "--ssh cannot be used with --non-interactive; use --token or --token-file."
+        )
+    if mapping_mode == "full":
+        if not local_path:
+            raise ValueError("--mapping full requires --path or --subdir.")
+        if not remote_path:
+            raise ValueError("--mapping full requires --remote-path.")
+    elif mapping_mode == "remote-only":
+        if local_path:
+            raise ValueError("--mapping remote-only cannot be combined with --path or --subdir.")
+        if not remote_path:
+            raise ValueError("--mapping remote-only requires --remote-path.")
+    elif mapping_mode == "none":
+        if local_path or remote_path:
+            raise ValueError(
+                "--mapping none cannot be combined with --path, --subdir, or --remote-path."
+            )
+    if mapping_mode != "none" and not policy:
+        raise ValueError("--policy is required with --non-interactive when paths are saved.")
+    if getattr(args, "on_existing", "error") == "merge" and mapping_mode != "full":
+        raise ValueError("--on-existing merge requires --mapping full.")
 
 
 # @ensure_correct_kernel
@@ -148,10 +227,9 @@ def main():
         delete_remote,
         list_remotes,
         list_supported_remote_types,
-        set_host_port,
         setup_rclone,
     )
-    from .registry import load_all_registry, set_push_policy
+    from .registry import set_push_policy, set_remote_pin
 
     parser = argparse.ArgumentParser(description="Backup manager CLI using rclone")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -240,6 +318,34 @@ def main():
         help="Deprecated alias for --path (kept for backward compatibility).",
     )
     add.add_argument(
+        "--remote-path",
+        dest="add_remote_path",
+        help="Persistent remote base path. Required for non-interactive saved mappings.",
+    )
+    add.add_argument(
+        "--mapping",
+        dest="mapping_mode",
+        choices=["full", "remote-only", "none"],
+        help="Saved path mode: full local/remote mapping, remote-only pin, or no paths.",
+    )
+    add.add_argument(
+        "--policy",
+        dest="add_policy",
+        choices=["full", "append-only", "pull-only"],
+        help="Persistent transfer policy for the remote.",
+    )
+    add.add_argument(
+        "--on-existing",
+        choices=["error", "use", "merge", "overwrite"],
+        default="error",
+        help="How to handle an existing remote folder (non-interactive default: error).",
+    )
+    add.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Forbid prompts; require flags, persisted values, or supplied secret files.",
+    )
+    add.add_argument(
         "--token",
         dest="oauth_token",
         help="OAuth token JSON output from `rclone authorize` (dropbox/onedrive/drive)",
@@ -257,6 +363,33 @@ def main():
         action="store_true",
         help="Enable SSH tunnel instructions for OAuth remotes (headless setup).",
     )
+    add.add_argument("--lumio-project-id", help="LUMI-O project id for non-interactive setup.")
+    add.add_argument("--lumio-access-key", help="LUMI-O access key for non-interactive setup.")
+    add.add_argument(
+        "--lumio-secret-file",
+        help="File containing the LUMI-O secret key for non-interactive setup.",
+    )
+    add.add_argument("--lumip-project-id", help="LUMI-P project id for non-interactive setup.")
+    add.add_argument("--lumip-username", help="LUMI-P username for non-interactive setup.")
+    add.add_argument("--erda-username", help="ERDA username for non-interactive setup.")
+    add.add_argument(
+        "--erda-password-file",
+        help="File containing the ERDA password for non-interactive setup.",
+    )
+    add.add_argument(
+        "--ssh-key-path",
+        help="SSH private key path for LUMI-P or UCloud non-interactive setup.",
+    )
+    add.add_argument(
+        "--use-ssh-agent",
+        action="store_true",
+        help="Use ssh-agent instead of an SSH key file for supported SFTP backends.",
+    )
+    add.add_argument("--ucloud-port", help="UCloud SSH port for non-interactive setup.")
+    add.add_argument(
+        "--rclone-options-file",
+        help="JSON file of flat rclone config options for generic sftp or s3 backends.",
+    )
 
     # Push command
     push = subparsers.add_parser("push", help="Push/backup to remote")
@@ -268,6 +401,11 @@ def main():
         help="sync: mirror (default), copy: no deletes, move: delete source after",
     )
     push.add_argument("--remote-path", help="remote path to backup")
+    push.add_argument(
+        "--path",
+        dest="local_path",
+        help="Override the saved local source path; required for remote-only pins.",
+    )
     push.add_argument(
         "--search",
         dest="search_pattern",
@@ -306,6 +444,13 @@ def main():
         dest="local_path",
         help="Override destination path (`--local-path` kept as legacy alias).",
     )
+
+    # Pin command
+    pin = subparsers.add_parser("pin", help="Pin or clear a default remote base path")
+    pin.add_argument("--remote", required=True, help="Registered remote name")
+    pin_paths = pin.add_mutually_exclusive_group(required=True)
+    pin_paths.add_argument("--remote-path", help="Remote base path to pin")
+    pin_paths.add_argument("--clear", action="store_true", help="Clear the saved remote pin")
     pull.add_argument(
         "--search",
         dest="search_pattern",
@@ -381,7 +526,6 @@ def main():
     # Handle commands
     if hasattr(args, "remote") and args.remote:
         remote = args.remote.strip().lower()
-        registry = load_all_registry()
 
         add_backend = None
         if args.command == "add":
@@ -390,19 +534,6 @@ def main():
             except ValueError as exc:
                 print(f"Error: {exc}")
                 sys.exit(2)
-
-        runtime_backend = None
-        if args.command in {"push", "pull"} and remote != "all":
-            meta = registry.get(remote, {})
-            if isinstance(meta, dict):
-                runtime_backend = normalize_backend(meta.get("remote_type"))
-            runtime_backend = runtime_backend or resolve_backend(None, remote)
-
-        # Set host/port for applicable SFTP remotes.
-        if args.command == "add" and add_backend in {"erda", "ucloud"}:
-            set_host_port(remote)
-        if args.command in {"push", "pull"} and runtime_backend in {"erda", "ucloud"}:
-            set_host_port(remote)
 
         # Dispatch commands
         if args.command == "add":
@@ -426,13 +557,50 @@ def main():
                     print(f"Error: invalid token JSON in {token_path}: {e}")
                     sys.exit(2)
 
-            setup_rclone(
+            try:
+                backend_config = {
+                    "lumio_project_id": getattr(args, "lumio_project_id", None),
+                    "lumio_access_key": getattr(args, "lumio_access_key", None),
+                    "lumio_secret_key": _read_secret_file(
+                        getattr(args, "lumio_secret_file", None), "LUMI-O secret"
+                    ),
+                    "lumip_project_id": getattr(args, "lumip_project_id", None),
+                    "lumip_username": getattr(args, "lumip_username", None),
+                    "erda_username": getattr(args, "erda_username", None),
+                    "erda_password": _read_secret_file(
+                        getattr(args, "erda_password_file", None), "ERDA password"
+                    ),
+                    "ssh_key_path": getattr(args, "ssh_key_path", None),
+                    "use_ssh_agent": bool(getattr(args, "use_ssh_agent", False)),
+                    "ucloud_port": getattr(args, "ucloud_port", None),
+                }
+                rclone_options = _load_rclone_options(getattr(args, "rclone_options_file", None))
+                if getattr(args, "non_interactive", False):
+                    _validate_non_interactive_add(args, add_local_path)
+            except ValueError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+
+            created = setup_rclone(
                 remote,
                 backend=add_backend,
                 local_backup_path=add_local_path,
                 oauth_token=oauth_token,
                 ssh_mode=getattr(args, "ssh_mode", False),
+                non_interactive=getattr(args, "non_interactive", False),
+                mapping_mode=getattr(args, "mapping_mode", None),
+                remote_path=getattr(args, "add_remote_path", None),
+                push_policy=getattr(args, "add_policy", None),
+                on_existing=(
+                    getattr(args, "on_existing", "error")
+                    if getattr(args, "non_interactive", False)
+                    else None
+                ),
+                backend_config=backend_config,
+                rclone_options=rclone_options,
             )
+            if not created:
+                sys.exit(1)
 
         elif args.command == "push":
             if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
@@ -442,6 +610,7 @@ def main():
             push_rclone(
                 remote_name=remote,
                 new_path=args.remote_path,
+                local_path=args.local_path,
                 operation=mode,
                 dry_run=args.dry_run,
                 verbose=args.verbose,
@@ -467,6 +636,11 @@ def main():
 
         elif args.command == "delete":
             delete_remote(remote_name=remote, verbose=args.verbose)
+
+        elif args.command == "pin":
+            pinned_path = None if getattr(args, "clear", False) else args.remote_path
+            if not set_remote_pin(remote_name=remote, remote_path=pinned_path):
+                sys.exit(2)
 
         elif args.command == "diff":
             generate_diff_report(remote_name=remote)

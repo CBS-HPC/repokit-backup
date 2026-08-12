@@ -53,48 +53,75 @@ def _detect_default_ssh_key() -> str:
     return str((pathlib.Path.home() / ".ssh" / "id_ed25519"))
 
 
-def set_host_port(remote_name: str) -> None:
-    remote_type = _detect_remote_type(remote_name)
+def set_host_port(
+    remote_name: str,
+    backend: str | None = None,
+    *,
+    ucloud_port: str | None = None,
+    ssh_key_path: str | None = None,
+    use_ssh_agent: bool = False,
+    non_interactive: bool = False,
+) -> None:
+    """Create backend-specific SFTP runtime configuration without alias coupling."""
+    remote_type = backend or _detect_remote_type(remote_name)
     if remote_type not in ["erda", "ucloud"]:
         return
 
     if remote_type == "erda":
-        save_to_env("io.erda.dk", "HOST")
-        save_to_env("22", "PORT")
+        save_to_env("io.erda.dk", "ERDA_HOST")
+        save_to_env("22", "ERDA_PORT")
         return
 
-    host = "ssh.cloud.sdu.dk"
-    existing_port = load_from_env("PORT")
-    port_input = _prompt_with_default("Port for ucloud", existing_port)
+    host = (load_from_env("UCLOUD_HOST") or "ssh.cloud.sdu.dk").strip()
+    existing_port = (load_from_env("UCLOUD_PORT") or "22").strip()
+    if non_interactive:
+        port_input = (ucloud_port or existing_port).strip()
+    else:
+        port_input = _prompt_with_default("Port for ucloud", existing_port)
     port_final = _validate_port(port_input, existing_port)
-    save_to_env(host, "HOST")
-    save_to_env(port_final, "PORT")
+    save_to_env(host, "UCLOUD_HOST")
+    save_to_env(port_final, "UCLOUD_PORT")
 
-    default_key = _detect_default_ssh_key()
-    ssh_key_path = _prompt_with_default(
-        "Path to SSH private key for ucloud", default_key
-    ).strip()
-    ssh_key_path = str(pathlib.Path(ssh_key_path).expanduser())
+    if use_ssh_agent:
+        key_path = ""
+    elif non_interactive:
+        key_path = (
+            ssh_key_path or detect_existing_ssh_key("UCLOUD_SSH_KEY_PATH", "SSH_PATH") or ""
+        ).strip()
+    else:
+        default_key = _detect_default_ssh_key()
+        key_path = _prompt_with_default("Path to SSH private key for ucloud", default_key).strip()
 
-    if not os.path.isfile(ssh_key_path):
-        print(f"SSH key file not found: {ssh_key_path}")
+    key_path = str(pathlib.Path(key_path).expanduser()) if key_path else ""
+
+    if key_path and not os.path.isfile(key_path):
+        print(f"SSH key file not found: {key_path}")
         return
+    if not key_path and not use_ssh_agent:
+        print("SSH key file is required for ucloud. Use --use-ssh-agent to opt in to agent auth.")
+        return
+    if key_path:
+        save_to_env(key_path, "UCLOUD_SSH_KEY_PATH")
 
     bin_folder = pathlib.Path("./bin").resolve()
     bin_folder.mkdir(parents=True, exist_ok=True)
     rclone_conf = bin_folder / "rclone_ucloud.conf"
-    config_content = f"""[ucloud]
+    config_content = f"""[{remote_name.strip().lower()}]
 type = sftp
 host = {host}
 port = {port_final}
 user = ucloud
-key_file = {ssh_key_path}
 """
+    if key_path:
+        config_content += f"key_file = {key_path}\n"
+    else:
+        config_content += "use_agent = true\n"
     with open(rclone_conf, "w", encoding="utf-8") as f:
         f.write(config_content)
 
     print(f"ucloud rclone config saved/updated at: {rclone_conf}")
-    print(f"Host: {host}, Port: {port_final}, SSH key: {ssh_key_path}")
+    auth_mode = f"SSH key: {key_path}" if key_path else "ssh-agent"
+    print(f"Host: {host}, Port: {port_final}, Authentication: {auth_mode}")
 
 
 def setup_ssh_agent_and_add_key(ssh_path: str) -> None:

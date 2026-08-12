@@ -65,6 +65,7 @@ Wheel filenames include version tags and may change over time.
 | `repokit-backup list` | List configured remotes/mappings. |
 | `repokit-backup ls` | List files/folders at a configured remote path. |
 | `repokit-backup policy` | Update policy (`full`, `append-only`, `pull-only`) for a configured remote. |
+| `repokit-backup pin` | Save or clear a remote-only default base path. |
 | `repokit-backup delete` | Remove a configured remote mapping. |
 | `repokit-backup transfer` | Transfer data between two remotes. |
 | `repokit-backup types` | List supported remote types. |
@@ -140,6 +141,33 @@ If the remote folder already exists, the conflict prompt includes:
 
 LUMI environment keys, backend aliases, and storage selector details are documented in [`docs/api-reference.md`](docs/api-reference.md).
 
+### Non-interactive setup
+
+Automation can configure a remote without prompts. Specify every path decision explicitly with `--mapping`:
+
+```bash
+# OAuth remote with a reusable remote-only pin. The remote folder is never purged by repokit-backup.
+repokit-backup add --remote myproject --backend dropbox \
+  --token-file ./dropbox-token.json \
+  --mapping remote-only --remote-path "/shared/team-research/myproject" \
+  --policy full --on-existing use --non-interactive
+
+# Full local/remote mapping for scheduled backups.
+repokit-backup add --remote myproject --backend dropbox \
+  --token-file ./dropbox-token.json \
+  --mapping full --path . --remote-path "/shared/team-research/myproject" \
+  --policy append-only --on-existing use --non-interactive
+```
+
+`--mapping` accepts `full`, `remote-only`, or `none`. A remote-only pin stores only a remote base path, so later transfers provide their local path explicitly:
+
+```bash
+repokit-backup push --remote myproject --path . --search "/data/**/*.parquet"
+repokit-backup pull --remote myproject --path ./restore
+```
+
+Use `repokit-backup pin --remote myproject --remote-path "/shared/team-research/myproject"` to add a pin to an already registered unmapped remote. Full mappings are protected from replacement by `pin`.
+
 ## Common Workflows
 
 Push to remote:
@@ -161,7 +189,7 @@ repokit-backup pull --remote myproject
 ```
 
 Note: if remote policy is `append-only` or `pull-only`, `pull` auto-switches `sync`/`move` to `copy`.
-For unmapped remotes, `pull` requires `--path`; if `--remote-path` is omitted it defaults to the remote root.
+For an unmapped remote, `pull` requires `--path`; if `--remote-path` is omitted it defaults to the remote root. A remote-only pin supplies the remote path but still requires `--path`.
 
 Interactive file/folder selection for transfer:
 
@@ -245,6 +273,7 @@ repokit-backup list
 `list` distinguishes:
 
 - `[mapped]`: remote and local paths are saved
+- `[remote-pinned]`: only an external remote base path is saved
 - `[registered]`: remote is configured in the registry, but no paths are mapped yet
 - `[unmapped]`: remote exists in rclone config but has no registry entry
 
@@ -267,6 +296,8 @@ Remove a remote:
 ```bash
 repokit-backup delete --remote myproject
 ```
+
+Pinned and existing remote paths are treated as externally owned and are not purged by `delete`; deletion removes their local rclone configuration and registry entry only.
 
 View supported remote types:
 

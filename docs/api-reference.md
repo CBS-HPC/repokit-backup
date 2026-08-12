@@ -43,6 +43,7 @@ Implemented backend families in the current codebase:
 | `ls` | List or search files on a remote |
 | `list` | Show configured remotes and registry entries |
 | `policy` | Change saved transfer policy for a configured remote |
+| `pin` | Save or clear a remote-only default base path |
 | `diff` | Compare mapped local and remote content |
 | `delete` | Delete remote config and registry mapping |
 | `transfer` | Copy or sync between two remotes |
@@ -143,6 +144,19 @@ Stored through `load_from_env(...)` and `save_to_env(...)`.
 - `LUMIP_HOST`
 - `LUMIP_PORT`
 
+`erda`:
+
+- `ERDA_HOST`
+- `ERDA_PORT`
+- `ERDA_USERNAME`
+- `ERDA_PASSWORD`
+
+`ucloud`:
+
+- `UCLOUD_HOST`
+- `UCLOUD_PORT`
+- `UCLOUD_SSH_KEY_PATH`
+
 OAuth tunnel support:
 
 - `APP_PORT`
@@ -184,12 +198,22 @@ Each registry entry contains:
 - `local_path`
 - `remote_type`
 - `push_policy`
+- `mapping_mode`: `full`, `remote-only`, or `none`
+- `remote_path_ownership`: `managed`, `external`, or `none`
 - `last_action`
 - `last_operation`
 - `timestamp`
 - `status`
 
-Mapped remotes allow `push`, `pull`, `ls`, and `diff` to run without explicit source/destination paths.
+The three mapping modes are:
+
+| Mode | Saved state | Default behavior |
+|---|---|---|
+| `full` | remote path and local path | `push`, `pull`, `ls`, and `diff` can use the saved paths |
+| `remote-only` | remote path only | `ls` and `pull` use the saved remote base; `push`/`pull` still need `--path` |
+| `none` | no paths | `ls` and `pull` fall back to remote root; `push`/`pull` need explicit paths |
+
+Remote paths selected with `use`, `merge`, or a remote-only pin are marked `external`. They are never purged by `repokit-backup delete`.
 
 `add` can also configure a remote without creating a mapping if you answer `n` to:
 
@@ -207,7 +231,7 @@ Unmapped remotes are supported only in limited cases:
 
 - `ls` falls back to remote root
 - `pull` requires `--path`; if `--remote-path` is omitted it falls back to remote root
-- `push` still expects a saved mapping
+- `push` requires both `--path` and `--remote-path`
 
 ## Command Reference
 
@@ -238,9 +262,19 @@ Arguments:
 - `--subdir`: project-relative local source path to use or create
 - `--path`: filesystem path for local source
 - `--local-path`, `--local_path`: deprecated alias for `--path`
+- `--remote-path`: persistent remote base path
+- `--mapping`: `full`, `remote-only`, or `none`
+- `--policy`: `full`, `append-only`, or `pull-only`
+- `--on-existing`: `error`, `use`, `merge`, or `overwrite`
+- `--non-interactive`: prohibit prompts and require a complete explicit specification
 - `--token`: OAuth token JSON
 - `--token-file`: file containing OAuth token JSON
 - `--ssh`, `--ssh-mode`, `--shh-mode`: show SSH tunnel instructions for OAuth callback flow
+- `--lumio-project-id`, `--lumio-access-key`, `--lumio-secret-file`: LUMI-O automation values
+- `--lumip-project-id`, `--lumip-username`, `--ssh-key-path`, `--use-ssh-agent`: LUMI-P automation values
+- `--erda-username`, `--erda-password-file`: ERDA automation values
+- `--ucloud-port`: UCloud SSH port for automation
+- `--rclone-options-file`: JSON file containing flat rclone options for generic `sftp` or `s3`
 
 Behavior:
 
@@ -275,6 +309,36 @@ Notes:
 - `--subdir` creates the folder if missing
 - `--path` accepts an absolute path or a path relative to the current shell directory
 
+#### Non-interactive `add`
+
+`--non-interactive` does not call `input()` or run interactive `rclone config` setup. Values resolve in this order:
+
+1. Explicit command-line value
+2. Saved value through `load_from_env(...)`
+3. A documented safe default where one exists
+
+Explicit LUMI, ERDA, and UCloud values are persisted with `save_to_env(...)` for later runs. Secret values should be supplied through the corresponding `*-file` flag rather than shell history.
+
+`--mapping` is mandatory with `--non-interactive`:
+
+- `full` requires `--path` (or `--subdir`), `--remote-path`, and `--policy`
+- `remote-only` requires `--remote-path` and `--policy`, and rejects a local source path
+- `none` rejects all path flags and creates only the rclone/registry remote entry
+- `--on-existing error` is the default and fails safely if the remote folder already exists
+- `--on-existing use` retains existing data and marks the remote path external
+- `--on-existing merge` is allowed only for `full` mappings
+- `--on-existing overwrite` purges the specified remote folder before saving a managed mapping
+
+OAuth backends require `--token` or `--token-file` in this mode. Generic `sftp` and `s3` require `--rclone-options-file`, for example:
+
+```json
+{
+  "host": "storage.example.org",
+  "user": "researcher",
+  "key_file": "/home/researcher/.ssh/id_ed25519"
+}
+```
+
 ### `push`
 
 Transfers local files to the remote destination.
@@ -284,14 +348,17 @@ Arguments:
 - `--remote`: required
 - `--mode`: `sync`, `copy`, `move`
 - `--remote-path`: override mapped remote destination
+- `--path`: override mapped local source
 - `--search`: non-interactive recursive source filter
 - `--select`: interactive source selection
 
 Behavior:
 
 - default mode is `sync` unless `--mode` is provided
-- uses the mapped local source path
+- uses the mapped local source path unless `--path` is given
 - uses the mapped remote path unless `--remote-path` is given
+- a remote-only pin supplies the destination, but `--path` is still required
+- an unmapped remote requires both `--path` and `--remote-path`
 - reads ignore patterns from `[tool.rcloneignore]` if the local source is the project root
 - excludes nested child mappings automatically
 - commits through `repokit.vcs.rclone_commit` when that integration is available
@@ -337,6 +404,8 @@ Unmapped remote behavior:
 - if `--remote-path` is omitted, source defaults to remote root `<remote>:`
 
 This makes ad hoc restore possible even before a persistent mapping has been created.
+
+For remote-only pins, source defaults to the pinned remote path and `--path` is required.
 
 Search/filter rules:
 
@@ -389,6 +458,27 @@ repokit-backup ls --remote myproject --search "/*/file_*.txt"
 ### `list`
 
 Prints configured remotes, saved mappings, last action, last operation, timestamp, status, and policy.
+
+Labels distinguish full mappings (`[mapped]`), remote-only pins (`[remote-pinned]`), registered unmapped remotes (`[registered]`), and rclone-only remotes (`[unmapped]`).
+
+### `pin`
+
+Adds or clears a remote-only default base path for a registered remote.
+
+Arguments:
+
+- `--remote`: registered remote name
+- `--remote-path`: base path to persist
+- `--clear`: remove an existing remote-only pin
+
+Examples:
+
+```bash
+repokit-backup pin --remote myproject --remote-path "/shared/team-research/myproject"
+repokit-backup pin --remote myproject --clear
+```
+
+`pin` is intentionally limited to registered unmapped or remote-only entries. It refuses to overwrite a full mapping, so a local source path cannot be discarded accidentally.
 
 It combines:
 
@@ -491,6 +581,7 @@ Current rule:
 Meaning depends on command:
 
 - `add`: local source path
+- `push`: local source path override
 - `pull`: local destination path
 - `ls`: remote subpath under the current listing base
 
@@ -500,6 +591,8 @@ Meaning depends on command:
 
 - `push`: override remote destination
 - `pull`: override remote source
+- `add`: persistent remote path for `--mapping full` or `--mapping remote-only`
+- `pin`: persistent remote-only base path
 
 Accepted forms:
 
@@ -550,6 +643,8 @@ Schema example:
     "local_path": "/path/to/project",
     "remote_type": "dropbox",
     "push_policy": "full",
+    "mapping_mode": "full",
+    "remote_path_ownership": "managed",
     "last_action": "push",
     "last_operation": "copy",
     "timestamp": "2026-03-13T12:00:00",
@@ -563,6 +658,9 @@ Schema example:
 - `pull all` is not supported
 - unmapped `pull` requires `--path`
 - unmapped `ls` falls back to remote root
+- remote-only pins require `--path` for `push` and `pull`
+- `pin` cannot replace a full mapping
+- externally owned remote paths are never purged by `delete`
 - nested child mappings are excluded from parent pushes/pulls
 - root-level ignore patterns come from `[tool.rcloneignore]`
 - LUMI-P custom paths must be absolute and must not contain `..`
@@ -576,6 +674,15 @@ Schema example:
 
 ```bash
 repokit-backup add --remote myproject --backend dropbox --subdir /data
+```
+
+### Add a remote-only pin without prompts
+
+```bash
+repokit-backup add --remote myproject --backend dropbox \
+  --token-file ./dropbox-token.json \
+  --mapping remote-only --remote-path "/shared/team-research/myproject" \
+  --policy full --on-existing use --non-interactive
 ```
 
 ### Push only parquet files under `data/`

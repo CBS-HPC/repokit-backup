@@ -14,6 +14,7 @@ from .auth import detect_existing_ssh_key, set_host_port as _set_host_port
 from .remote_types import get_base_remote_type
 from .remote_info import (
     ensure_repo_suffix as _ensure_repo_suffix_impl,
+    non_interactive_remote_info as _non_interactive_remote_info,
     remote_user_info as _remote_user_info,
 )
 from .registry import save_registry, load_all_registry, delete_from_registry, load_registry
@@ -30,9 +31,9 @@ def _rclone_cmd(*args: str) -> list[str]:
     return ["rclone", *args]
 
 
-def set_host_port(remote_name: str):
+def set_host_port(remote_name: str, backend: str | None = None, **kwargs):
     """Compatibility wrapper exported from remotes module."""
-    return _set_host_port(remote_name)
+    return _set_host_port(remote_name, backend=backend, **kwargs)
 
 
 def _ensure_repo_suffix(folder: str, repo: str, project_root: pathlib.Path) -> str:
@@ -126,14 +127,19 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
     """Delete one remote mapping and cleanup config files when empty."""
     remote_name = remote_name.strip().lower()
     remote_path, _ = load_registry(remote_name)
+    registry_entry = load_all_registry().get(remote_name, {})
+    if not isinstance(registry_entry, dict):
+        registry_entry = {}
+    remote_type = str(registry_entry.get("remote_type", "")).strip().lower()
+    ownership = str(registry_entry.get("remote_path_ownership", "external")).strip().lower()
 
     rclone_conf = None
-    if remote_name.startswith("ucloud"):
+    if remote_type == "ucloud" or remote_name.startswith("ucloud"):
         ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if ucloud_conf.exists():
             rclone_conf = ucloud_conf
 
-    if remote_path:
+    if remote_path and ownership == "managed":
         purge_cmd = _rclone_cmd("purge", remote_path) + _rc_verbose_args(verbose)
         if rclone_conf is not None:
             purge_cmd += ["--config", str(rclone_conf)]
@@ -146,6 +152,8 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
             print(f"Warning: Could not purge remote folder '{remote_path}': {e}")
         except Exception as e:
             print(f"Unexpected error during purge: {e}")
+    elif remote_path:
+        print(f"Remote path for '{remote_name}' is externally owned. Skipping purge: {remote_path}")
     else:
         print(f"No registry mapping found for '{remote_name}'. Skipping purge.")
 
@@ -175,9 +183,9 @@ def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
         remote_name,
         "sftp",
         "host",
-        load_from_env("HOST"),
+        load_from_env("ERDA_HOST") or "io.erda.dk",
         "port",
-        load_from_env("PORT"),
+        load_from_env("ERDA_PORT") or "22",
         "user",
         login,
     )
@@ -216,10 +224,16 @@ def _add_lumio_remote(remote_name: str, access_key: str, secret_key: str):
     print(f"Rclone remote '{remote_name}' (lumio) created.")
 
 
-def _add_lumip_remote(remote_name: str, username: str):
+def _add_lumip_remote(
+    remote_name: str,
+    username: str,
+    ssh_key_path: str | None = None,
+    use_ssh_agent: bool = False,
+):
     host = (load_from_env("LUMIP_HOST") or "lumi.csc.fi").strip()
     port = (load_from_env("LUMIP_PORT") or "22").strip()
-    ssh_key_path = detect_existing_ssh_key("LUMIP_SSH_KEY_PATH", "SSH_PATH")
+    if ssh_key_path is None and not use_ssh_agent:
+        ssh_key_path = detect_existing_ssh_key("LUMIP_SSH_KEY_PATH", "SSH_PATH")
     save_to_env(host, "LUMIP_HOST")
     save_to_env(port, "LUMIP_PORT")
     if ssh_key_path:
@@ -246,6 +260,15 @@ def _add_lumip_remote(remote_name: str, username: str):
         command += ["use_agent", "true"]
     subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
     print(f"Rclone remote '{remote_name}' (lumip) created.")
+
+
+def _add_options_remote(remote_name: str, base_type: str, options: dict[str, str]) -> None:
+    """Create a generic rclone backend from validated, non-interactive options."""
+    command = _rclone_cmd("config", "create", remote_name, base_type)
+    for key, value in options.items():
+        command.extend([key, value])
+    subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+    print(f"Rclone remote '{remote_name}' ({base_type}) created from supplied options.")
 
 
 def _is_port_listening(host: str, port: int, retries: int = 5, delay_s: float = 0.4) -> bool:
@@ -407,11 +430,15 @@ def _add_remote(
     pass_key: str = None,
     oauth_token: str | None = None,
     ssh_mode: bool = False,
+    non_interactive: bool = False,
+    backend_options: dict[str, str | bool] | None = None,
+    rclone_options: dict[str, str] | None = None,
 ):
     """Add a new rclone remote or prepare runtime config."""
     remote_type = backend
     base_type = get_base_remote_type(backend)
     oauth_remotes = {"dropbox", "onedrive", "drive"}
+    backend_options = backend_options or {}
 
     try:
         if remote_type == "erda":
@@ -426,7 +453,12 @@ def _add_remote(
             return True
 
         elif remote_type == "lumip":
-            _add_lumip_remote(remote_name, login)
+            _add_lumip_remote(
+                remote_name,
+                login,
+                ssh_key_path=str(backend_options.get("ssh_key_path") or "") or None,
+                use_ssh_agent=bool(backend_options.get("use_ssh_agent")),
+            )
             return True
 
         elif remote_type in oauth_remotes:
@@ -438,6 +470,10 @@ def _add_remote(
             if oauth_token:
                 _add_oauth_remote_with_token(remote_name, base_type, oauth_token)
             else:
+                if non_interactive:
+                    raise ValueError(
+                        f"{remote_type} requires --token or --token-file with --non-interactive."
+                    )
                 if ssh_mode:
                     callback_port = _prompt_ssh_tunnel_for_oauth(callback_port)
                 _add_simple_remote(
@@ -453,7 +489,10 @@ def _add_remote(
                 print(
                     "[WARN] --token was provided for a non-OAuth backend ('local'). Ignoring token."
                 )
-            _add_simple_remote(remote_name, base_type)
+            if non_interactive:
+                _add_options_remote(remote_name, base_type, {})
+            else:
+                _add_simple_remote(remote_name, base_type)
             return True
 
         else:
@@ -461,7 +500,14 @@ def _add_remote(
                 print(
                     f"[WARN] --token was provided for backend '{remote_type}' which is not OAuth-based. Ignoring token."
                 )
-            _add_interactive_remote(remote_name, base_type)
+            if rclone_options:
+                _add_options_remote(remote_name, base_type, rclone_options)
+            elif non_interactive:
+                raise ValueError(
+                    f"Backend '{remote_type}' requires --rclone-options-file with --non-interactive."
+                )
+            else:
+                _add_interactive_remote(remote_name, base_type)
             return True
 
     except Exception as e:
@@ -469,20 +515,31 @@ def _add_remote(
         return False
 
 
-def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_path: str):
-    """Add folder mapping for remote with overwrite/merge safeguard, using ucloud config if applicable."""
+def _add_folder(
+    remote_name: str,
+    backend: str,
+    base_folder: str,
+    local_backup_path: str | None,
+    *,
+    mapping_mode: str = "full",
+    push_policy: str | None = None,
+    on_existing: str | None = None,
+) -> bool:
+    """Save a mapping or remote pin with explicit or interactive conflict handling."""
     remote_type = backend
     rclone_conf: pathlib.Path | None = None
-    push_policy_default = "full"
+    valid_policies = {"full", "append-only", "pull-only"}
 
     def _prompt_push_policy(default_policy: str = "full") -> str:
         valid = {"f": "full", "a": "append-only", "p": "pull-only"}
         reverse = {v: k for k, v in valid.items()}
         default_key = reverse.get(default_policy, "f")
         while True:
-            choice = input(
-                f"Push policy: full (f), append-only (a), pull-only (p) [{default_key}]: "
-            ).strip().lower()
+            choice = (
+                input(f"Push policy: full (f), append-only (a), pull-only (p) [{default_key}]: ")
+                .strip()
+                .lower()
+            )
             if choice == "":
                 return valid[default_key]
             if choice in valid:
@@ -492,28 +549,34 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
     def _build_folder_cmds(folder: str) -> tuple[str, list[str], list[str]] | None:
         nonlocal rclone_conf
         rclone_conf = None
+        normalized_input = folder.strip().replace("\\", "/")
+        if not normalized_input:
+            print("Remote folder cannot be empty.")
+            return None
 
         if remote_type in ["dropbox", "onedrive", "drive"]:
-            normalized = folder.lstrip("/")
+            normalized = normalized_input.rstrip("/")
             list_cmd_local = _rclone_cmd("lsd", f"{remote_name}:{normalized}")
             mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:{normalized}")
             return normalized, list_cmd_local, mkdir_cmd_local
 
         if remote_type == "lumio":
-            normalized = folder.lstrip("/")
-            list_cmd_local = _rclone_cmd("lsd", f"{remote_name}:/{normalized}")
-            mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:/{normalized}")
+            normalized = f"/{normalized_input.lstrip('/')}".rstrip("/") or "/"
+            list_cmd_local = _rclone_cmd("lsd", f"{remote_name}:{normalized}")
+            mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:{normalized}")
             return normalized, list_cmd_local, mkdir_cmd_local
 
         # SFTP (ucloud, erda) or local
-        normalized = f"/{folder.lstrip('/')}"
+        normalized = f"/{normalized_input.lstrip('/')}".rstrip("/") or "/"
         list_cmd_local = _rclone_cmd("lsf", f"{remote_name}:{normalized}")
         mkdir_cmd_local = _rclone_cmd("mkdir", f"{remote_name}:{normalized}")
 
-        if remote_name.lower().startswith("ucloud"):
+        if remote_type == "ucloud":
             rclone_conf_local = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
             if not rclone_conf_local.exists():
-                print("[WARN] ucloud rclone config not found in ./bin. Please run set_host_port first.")
+                print(
+                    "[WARN] ucloud rclone config not found in ./bin. Please run set_host_port first."
+                )
                 return None
             rclone_conf = rclone_conf_local
             list_cmd_local += ["--config", str(rclone_conf_local)]
@@ -523,15 +586,32 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
 
     built = _build_folder_cmds(base_folder)
     if built is None:
-        return
+        return False
     base_folder, list_cmd, mkdir_cmd = built
 
     # Check if remote folder exists
     result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
     merge_only = False
+    path_ownership = "external" if mapping_mode == "remote-only" else "managed"
     # rclone may return success with empty stdout for existing-but-empty folders.
     # Treat any successful listing as "folder exists" and ask conflict resolution.
     if result.returncode == 0:
+        if on_existing is not None:
+            if on_existing not in {"error", "use", "merge", "overwrite"}:
+                print(f"Unknown --on-existing action '{on_existing}'.")
+                return False
+            if on_existing == "error":
+                print(
+                    f"Remote folder '{base_folder}' already exists on '{remote_name}'. "
+                    "Choose --on-existing use, merge, or overwrite."
+                )
+                return False
+            if on_existing == "merge" and mapping_mode != "full":
+                print("--on-existing merge requires --mapping full with a local source path.")
+                return False
+            choice = {"use": "u", "merge": "s", "overwrite": "o"}[on_existing]
+        else:
+            choice = ""
         valid_choices = {
             "o": "overwrite",
             "s": "merge/sync",
@@ -539,7 +619,7 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
             "n": "change folder",
             "c": "cancel",
         }
-        while True:
+        while choice not in valid_choices:
             choice = (
                 input(
                     f"'{base_folder}' exists on '{remote_name}'. Overwrite (o), Merge/Sync (s), Use existing (u), Change folder (n), Cancel (c)? [o/s/u/n/c]: "
@@ -551,63 +631,62 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
                 print(
                     f"Invalid choice: {choice}. Please choose one of {', '.join(valid_choices.keys())}."
                 )
-                continue
+        if choice == "o":
+            print("[WARN] You chose to overwrite the remote folder.")
+            purge_cmd = _rclone_cmd("purge", f"{remote_name}:{base_folder}")
+            if rclone_conf is not None:
+                purge_cmd += ["--config", str(rclone_conf)]
+            try:
+                subprocess.run(purge_cmd, check=True, timeout=DEFAULT_TIMEOUT)
+            except Exception as exc:
+                print(f"Error overwriting remote folder: {exc}")
+                return False
+        elif choice == "s":
+            print("[INFO] Will merge/sync differences only.")
+            merge_only = True
+            path_ownership = "external"
+        elif choice == "u":
+            print("[INFO] Using existing remote folder as-is.")
+            path_ownership = "external"
+        elif choice == "n":
+            renamed_folder = input("New folder name: ").strip()
+            if not renamed_folder:
+                print("Folder name cannot be empty.")
+                return False
+            return _add_folder(
+                remote_name,
+                backend,
+                renamed_folder,
+                local_backup_path,
+                mapping_mode=mapping_mode,
+                push_policy=push_policy,
+            )
+        else:
+            print("Cancelled.")
+            return False
 
-            if choice == "o":
-                print("[WARN] You chose to overwrite the remote folder.")
-                purge_cmd = _rclone_cmd("purge", f"{remote_name}:{base_folder}")
-                if remote_name.lower().startswith("ucloud") and rclone_conf is not None:
-                    purge_cmd += ["--config", str(rclone_conf)]
-                subprocess.run(
-                    purge_cmd,
-                    check=True,
-                    timeout=DEFAULT_TIMEOUT,
-                )
-                break
-
-            elif choice == "s":
-                print("[INFO] Will merge/sync differences only.")
-                merge_only = True
-                break
-
-            elif choice == "u":
-                print("[INFO] Using existing remote folder as-is.")
-                break
-
-            elif choice == "n":
-                renamed_folder = input("New folder name: ").strip()
-                if not renamed_folder:
-                    print("Folder name cannot be empty.")
-                    continue
-                built = _build_folder_cmds(renamed_folder)
-                if built is None:
-                    return
-                base_folder, list_cmd, mkdir_cmd = built
-                result = subprocess.run(
-                    list_cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT
-                )
-                continue
-
-            elif choice == "c":
-                print("Cancelled.")
-                return
-
-    push_policy = _prompt_push_policy(push_policy_default)
+    if push_policy is None:
+        push_policy = _prompt_push_policy()
+    if push_policy not in valid_policies:
+        print(f"Invalid push policy '{push_policy}'.")
+        return False
 
     # Ensure remote folder exists
     try:
         subprocess.run(mkdir_cmd, check=True, timeout=DEFAULT_TIMEOUT)
     except Exception as e:
         print(f"Error creating folder: {e}")
-        return
+        return False
 
     # Save mapping
     save_registry(
         remote_name,
         base_folder,
-        local_backup_path,
+        local_backup_path if mapping_mode == "full" else None,
         remote_type,
         push_policy=push_policy,
+        mapping_mode=mapping_mode,
+        path_ownership=path_ownership,
     )
 
     # Run merge if requested
@@ -624,6 +703,7 @@ def _add_folder(remote_name: str, backend: str, base_folder: str, local_backup_p
             action="push",
             operation="copy",
         )  # copy to avoid deleting
+    return True
 
 
 def list_remotes():
@@ -640,7 +720,10 @@ def list_remotes():
         all_remotes = load_all_registry()
         for remote in sorted(rclone_configured):
             meta = all_remotes.get(remote, {})
-            if isinstance(meta, dict) and meta.get("remote_path"):
+            mapping_mode = meta.get("mapping_mode") if isinstance(meta, dict) else None
+            if mapping_mode == "remote-only":
+                mapping_note = "[remote-pinned]"
+            elif isinstance(meta, dict) and meta.get("remote_path") and meta.get("local_path"):
                 mapping_note = "[mapped]"
             elif remote in all_remotes:
                 mapping_note = "[registered]"
@@ -655,25 +738,30 @@ def list_remotes():
     else:
         for remote, meta in all_remotes.items():
             remote_path = meta.get("remote_path") if isinstance(meta, dict) else meta
-            local_path = (
-                meta.get("local_path")
-                if isinstance(meta, dict)
-                else None
-            )
+            local_path = meta.get("local_path") if isinstance(meta, dict) else None
             remote_type = (
                 meta.get("remote_type", "unknown") if isinstance(meta, dict) else "unknown"
             )
-            push_policy = (
-                meta.get("push_policy", "full") if isinstance(meta, dict) else "full"
-            )
+            push_policy = meta.get("push_policy", "full") if isinstance(meta, dict) else "full"
             action = meta.get("last_action") if isinstance(meta, dict) else "-"
             operation = meta.get("last_operation") if isinstance(meta, dict) else "-"
             timestamp = meta.get("timestamp") if isinstance(meta, dict) else "-"
             status = meta.get("status") if isinstance(meta, dict) else "-"
-            status_note = "[OK]" if remote in rclone_configured else "[WARN] missing in rclone config"
+            mapping_mode = (
+                meta.get("mapping_mode", "unknown") if isinstance(meta, dict) else "unknown"
+            )
+            ownership = (
+                meta.get("remote_path_ownership", "unknown")
+                if isinstance(meta, dict)
+                else "unknown"
+            )
+            status_note = (
+                "[OK]" if remote in rclone_configured else "[WARN] missing in rclone config"
+            )
             print(f"  - {remote} ({remote_type}):")
             print(f"      Remote: {remote_path or 'Not mapped'}")
             print(f"      Local:  {local_path or 'Not mapped'}")
+            print(f"      Mapping: {mapping_mode} | Remote ownership: {ownership}")
             print(f"      Policy: {push_policy}")
             print(
                 f"      Action: {action} | Operation: {operation} | Timestamp: {timestamp} | Status: {status} {status_note}"
@@ -686,8 +774,21 @@ def setup_rclone(
     local_backup_path: str = None,
     oauth_token: str | None = None,
     ssh_mode: bool = False,
-):
-    """Setup rclone remote and folder mapping."""
+    *,
+    non_interactive: bool = False,
+    mapping_mode: str | None = None,
+    remote_path: str | None = None,
+    push_policy: str | None = None,
+    on_existing: str | None = None,
+    backend_config: dict[str, str | bool] | None = None,
+    rclone_options: dict[str, str] | None = None,
+) -> bool:
+    """Setup an rclone remote with either prompts or a complete explicit specification."""
+    backend = backend or "sftp"
+    backend_config = backend_config or {}
+    if local_backup_path is None and mapping_mode == "full":
+        print("A full mapping requires a local source path.")
+        return False
     if local_backup_path is None:
         local_backup_path = str(_project_root())
     else:
@@ -699,39 +800,86 @@ def setup_rclone(
         local_backup_path = str(local_path_obj)
 
     if remote_name:
-        remote_name, login_key, pass_key, base_folder = _remote_user_info(
-            remote_name.lower(),
-            local_backup_path,
-            _project_root(),
-            backend=backend or "sftp",
-        )
+        remote_name = remote_name.lower()
+        if non_interactive:
+            try:
+                login_key, pass_key, resolved_options = _non_interactive_remote_info(
+                    backend,
+                    lumio_project_id=str(backend_config.get("lumio_project_id") or "") or None,
+                    lumio_access_key=str(backend_config.get("lumio_access_key") or "") or None,
+                    lumio_secret_key=str(backend_config.get("lumio_secret_key") or "") or None,
+                    lumip_project_id=str(backend_config.get("lumip_project_id") or "") or None,
+                    lumip_username=str(backend_config.get("lumip_username") or "") or None,
+                    erda_username=str(backend_config.get("erda_username") or "") or None,
+                    erda_password=str(backend_config.get("erda_password") or "") or None,
+                    ssh_key_path=str(backend_config.get("ssh_key_path") or "") or None,
+                    use_ssh_agent=bool(backend_config.get("use_ssh_agent")),
+                    ucloud_port=str(backend_config.get("ucloud_port") or "") or None,
+                )
+            except ValueError as exc:
+                print(f"Error: {exc}")
+                return False
+            backend_options = {**backend_config, **resolved_options}
+            base_folder = remote_path if mapping_mode != "none" else None
+        else:
+            remote_name, login_key, pass_key, base_folder = _remote_user_info(
+                remote_name,
+                local_backup_path,
+                _project_root(),
+                backend=backend,
+            )
+            backend_options = {}
+
+        if backend == "ucloud":
+            set_host_port(
+                remote_name,
+                backend=backend,
+                ucloud_port=str(backend_options.get("ucloud_port") or "") or None,
+                ssh_key_path=str(backend_options.get("ssh_key_path") or "") or None,
+                use_ssh_agent=bool(backend_options.get("use_ssh_agent")),
+                non_interactive=non_interactive,
+            )
+
         created = _add_remote(
-            remote_name.lower(),
-            backend or "sftp",
+            remote_name,
+            backend,
             login_key,
             pass_key,
             oauth_token=oauth_token,
             ssh_mode=ssh_mode,
+            non_interactive=non_interactive,
+            backend_options=backend_options,
+            rclone_options=rclone_options,
         )
         if not created:
             print(f"Aborting setup for '{remote_name}' because remote creation failed.")
-            return
+            return False
         if base_folder is None:
             save_registry(
-                remote_name.lower(),
+                remote_name,
                 None,
                 None,
-                backend or "sftp",
-                push_policy="full",
+                backend,
+                push_policy=push_policy or "full",
+                mapping_mode="none",
             )
             print(
-                f"Remote '{remote_name.lower()}' configured without a saved path mapping. "
+                f"Remote '{remote_name}' configured without a saved path mapping. "
                 "Use explicit paths for push/pull, or add a mapping later."
             )
-            return
-        _add_folder(remote_name.lower(), backend or "sftp", base_folder, local_backup_path)
+            return True
+        resolved_mapping_mode = mapping_mode or "full"
+        return _add_folder(
+            remote_name,
+            backend,
+            base_folder,
+            local_backup_path,
+            mapping_mode=resolved_mapping_mode,
+            push_policy=push_policy,
+            on_existing=on_existing,
+        )
     else:
-        install_rclone("./bin")
+        return install_rclone("./bin")
 
 
 def delete_remote(remote_name: str, verbose: int = 0):
@@ -739,7 +887,8 @@ def delete_remote(remote_name: str, verbose: int = 0):
     remote_name = remote_name.strip().lower()
 
     if remote_name == "all":
-        registry_remotes = set(load_all_registry().keys())
+        registry_data = load_all_registry()
+        registry_remotes = set(registry_data.keys())
         default_cfg_remotes = _list_rclone_remotes()
         ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         ucloud_cfg_remotes = _list_rclone_remotes(ucloud_conf) if ucloud_conf.exists() else set()
@@ -752,8 +901,18 @@ def delete_remote(remote_name: str, verbose: int = 0):
                 _delete_config_if_no_remotes(ucloud_conf)
             return
 
+        externally_owned = sorted(
+            name
+            for name, entry in registry_data.items()
+            if isinstance(entry, dict)
+            and entry.get("remote_path")
+            and entry.get("remote_path_ownership") != "managed"
+        )
+        warning = ""
+        if externally_owned:
+            warning = f" Pinned external paths will not be purged ({', '.join(externally_owned)})."
         confirm = input(
-            f"Really delete ALL data and config entries for all remotes ({', '.join(all_remotes)})? [y/N]: "
+            f"Really delete all remote configurations ({', '.join(all_remotes)})?{warning} [y/N]: "
         )
         if confirm.lower() != "y":
             return
@@ -762,7 +921,16 @@ def delete_remote(remote_name: str, verbose: int = 0):
             _delete_single_remote(name, verbose=verbose)
         return
 
-    confirm = input(f"Really delete ALL data for '{remote_name}'? [y/N]: ")
+    entry = load_all_registry().get(remote_name, {})
+    ownership = entry.get("remote_path_ownership") if isinstance(entry, dict) else None
+    if ownership == "managed":
+        prompt = f"Really delete '{remote_name}' and its managed remote data? [y/N]: "
+    else:
+        prompt = (
+            f"Remove rclone configuration and registry entry for '{remote_name}'? "
+            "External remote data will not be deleted. [y/N]: "
+        )
+    confirm = input(prompt)
     if confirm.lower() != "y":
         return
 
