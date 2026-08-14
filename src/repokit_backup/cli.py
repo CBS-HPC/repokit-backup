@@ -3,18 +3,52 @@ CLI interface - Argument parsing and command dispatch.
 """
 
 import argparse
+import importlib
 import json
 import os
 import pathlib
 import sys
 
-import repokit_common
-from repokit_common.base import project_root as detect_project_root
 from .remote_types import CANONICAL_BACKENDS, normalize_backend
 
 # from ..common import ensure_correct_kernel
 
 SUPPORTED_BACKENDS = CANONICAL_BACKENDS
+RUNTIME_GITIGNORE_ENTRIES = (".env", "bin/")
+
+
+def _repokit_common_module():
+    """Import Common only after the CLI has selected its project root."""
+    import repokit_common
+
+    return repokit_common
+
+
+def _activate_repokit_common_root(project_root: pathlib.Path):
+    """Align Common's cached root values with this CLI invocation.
+
+    Common 1.0 currently exposes ``PROJECT_ROOT`` from several compatibility
+    modules. Prefer its future public setter when available; otherwise keep
+    those cached imports aligned for an explicit ``--project-root``.
+    """
+    repokit_common = _repokit_common_module()
+    resolved_root = project_root.resolve()
+    set_project_root = getattr(repokit_common, "set_project_root", None)
+    if callable(set_project_root):
+        set_project_root(resolved_root)
+        return repokit_common
+
+    for module_name in (
+        "repokit_common",
+        "repokit_common.base",
+        "repokit_common.env",
+        "repokit_common.secretstore",
+        "repokit_common.tomlutils",
+    ):
+        module = importlib.import_module(module_name)
+        if hasattr(module, "PROJECT_ROOT"):
+            setattr(module, "PROJECT_ROOT", resolved_root)
+    return repokit_common
 
 
 def _resolved_add_backend(explicit_backend: str | None, _remote_alias: str) -> str:
@@ -45,6 +79,10 @@ def _resolve_cli_project_root(
         return resolved_root
     if command == "init":
         return pathlib.Path.cwd().resolve()
+    # Auto-detection intentionally imports Common while still in the caller's
+    # directory. For --project-root and init, import happens after chdir below.
+    from repokit_common.base import project_root as detect_project_root
+
     return detect_project_root(extra_markers={"bin/rclone_remote.json", "bin/rclone.conf"})
 
 
@@ -57,6 +95,7 @@ def _ensure_rcloneignore_pyproject_config() -> None:
         "tool-replaces": ".rcloneignore",
         "patterns": ["bin/", ".venv/", ".conda/"],
     }
+    repokit_common = _repokit_common_module()
 
     current = (
         repokit_common.read_toml(
@@ -98,6 +137,23 @@ def _ensure_rcloneignore_pyproject_config() -> None:
     )
 
 
+def _ensure_runtime_gitignore() -> None:
+    """Exclude project-local credentials and rclone state from version control."""
+    repokit_common = _repokit_common_module()
+    gitignore_path = pathlib.Path(repokit_common.PROJECT_ROOT) / ".gitignore"
+    try:
+        current = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+        entries = {line.strip() for line in current.splitlines() if line.strip()}
+        missing = [entry for entry in RUNTIME_GITIGNORE_ENTRIES if entry not in entries]
+        if not missing:
+            return
+        separator = "" if not current or current.endswith("\n") else "\n"
+        addition = "# Project-local repokit-backup runtime state\n" + "\n".join(missing) + "\n"
+        gitignore_path.write_text(current + separator + addition, encoding="utf-8")
+    except OSError as exc:
+        print(f"Warning: could not update {gitignore_path}: {exc}")
+
+
 def _bootstrap_project_runtime(install_rclone_fn) -> tuple[pathlib.Path, pathlib.Path]:
     """
     Ensure local project state for repokit-backup exists.
@@ -105,9 +161,11 @@ def _bootstrap_project_runtime(install_rclone_fn) -> tuple[pathlib.Path, pathlib
     Returns:
         (bin_dir, pyproject_path)
     """
+    _ensure_runtime_gitignore()
     _ensure_rcloneignore_pyproject_config()
     if not install_rclone_fn("./bin"):
         raise RuntimeError("Error: rclone installation/verification failed.")
+    repokit_common = _repokit_common_module()
     bin_dir = (repokit_common.PROJECT_ROOT / pathlib.Path("./bin")).resolve()
     pyproject_path = (
         repokit_common.PROJECT_ROOT / pathlib.Path(repokit_common.TOML_PATH)
@@ -211,7 +269,7 @@ def main():
         sys.exit(2)
 
     os.chdir(resolved_root)
-    repokit_common.PROJECT_ROOT = resolved_root
+    repokit_common = _activate_repokit_common_root(resolved_root)
 
     # Import after root resolution so modules that read PROJECT_ROOT at import-time
     # capture the resolved root, not the shell subdirectory.
@@ -607,7 +665,7 @@ def main():
                 print("Error: use either --search or --select for push, not both.")
                 sys.exit(2)
             mode = getattr(args, "mode", "sync")
-            push_rclone(
+            ok = push_rclone(
                 remote_name=remote,
                 new_path=args.remote_path,
                 local_path=args.local_path,
@@ -617,13 +675,15 @@ def main():
                 select_path=getattr(args, "select", None),
                 search_pattern=getattr(args, "search_pattern", None),
             )
+            if not ok:
+                sys.exit(1)
 
         elif args.command == "pull":
             if getattr(args, "search_pattern", None) and getattr(args, "select", None) is not None:
                 print("Error: use either --search or --select for pull, not both.")
                 sys.exit(2)
             mode = getattr(args, "mode", "sync")
-            pull_rclone(
+            ok = pull_rclone(
                 remote_name=remote,
                 remote_path=args.remote_path,
                 new_path=args.local_path,
@@ -633,9 +693,13 @@ def main():
                 select_path=getattr(args, "select", None),
                 search_pattern=getattr(args, "search_pattern", None),
             )
+            if not ok:
+                sys.exit(1)
 
         elif args.command == "delete":
-            delete_remote(remote_name=remote, verbose=args.verbose)
+            ok = delete_remote(remote_name=remote, verbose=args.verbose)
+            if not ok:
+                sys.exit(1)
 
         elif args.command == "pin":
             pinned_path = None if getattr(args, "clear", False) else args.remote_path
@@ -643,13 +707,15 @@ def main():
                 sys.exit(2)
 
         elif args.command == "diff":
-            generate_diff_report(remote_name=remote)
+            if not generate_diff_report(remote_name=remote):
+                sys.exit(1)
         elif args.command == "ls":
-            list_remote_entries(
+            if not list_remote_entries(
                 remote_name=remote,
                 sub_path=getattr(args, "list_path", ""),
                 search_pattern=getattr(args, "search_pattern", None),
-            )
+            ):
+                sys.exit(1)
         elif args.command == "policy":
             ok = set_push_policy(remote_name=remote, push_policy=getattr(args, "policy_value", ""))
             if not ok:
@@ -659,13 +725,14 @@ def main():
         # Remote-to-remote transfer
         operation = getattr(args, "mode", "copy")
         dry_run = not args.confirm  # If not confirmed, run in dry-run
-        transfer_between_remotes(
+        if not transfer_between_remotes(
             source_remote=args.source.strip().lower(),
             dest_remote=args.destination.strip().lower(),
             operation=operation,
             dry_run=dry_run,
             verbose=args.verbose,
-        )
+        ):
+            sys.exit(1)
 
     else:
         # Commands without a remote

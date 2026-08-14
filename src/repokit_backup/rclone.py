@@ -1,9 +1,11 @@
+import hashlib
 import os
 import pathlib
-import subprocess
 import platform
+import shutil
+import subprocess
 import zipfile
-import glob
+
 import requests
 
 import repokit_common
@@ -24,6 +26,49 @@ except Exception:
 from .registry import update_sync_status, load_registry, load_all_registry
 
 DEFAULT_TIMEOUT = 600  # seconds
+RCLONE_VERSION = "1.73.2"
+
+# Pin the archives used by automatic installation. This prevents an upstream
+# ``rclone-current`` change from silently changing the executable we run.
+RCLONE_RELEASES = {
+    ("windows", "amd64"): (
+        "rclone-v1.73.2-windows-amd64.zip",
+        "rclone.exe",
+        "b77a72eab9692f9032dac89d7e13e07ce4747acd9ae402168cc8fe306de1138e",
+    ),
+    ("windows", "arm64"): (
+        "rclone-v1.73.2-windows-arm64.zip",
+        "rclone.exe",
+        "bc100700af528d00647aba08acdcfb81862f624f755c11c5324cf34c14982f2c",
+    ),
+    ("linux", "amd64"): (
+        "rclone-v1.73.2-linux-amd64.zip",
+        "rclone",
+        "00a1d8cb85552b7b07bb0416559b2e78fcf9c6926662a52682d81b5f20c90535",
+    ),
+    ("linux", "arm64"): (
+        "rclone-v1.73.2-linux-arm64.zip",
+        "rclone",
+        "2f7d8b807e6ea638855129052c834ca23aa538d3ad7786e30b8ad1e97c5db47b",
+    ),
+    ("darwin", "amd64"): (
+        "rclone-v1.73.2-osx-amd64.zip",
+        "rclone",
+        "ff3215b93e4588e0ccfef11e4c49755a91d42f4bc89c98bf89f6d30b0ae16f",
+    ),
+    ("darwin", "arm64"): (
+        "rclone-v1.73.2-osx-arm64.zip",
+        "rclone",
+        "879fd46e0338bf6244f55af6bde9f151a1711dd62abdc46117a4c11cfb0a601e",
+    ),
+}
+
+ARCHITECTURE_ALIASES = {
+    "amd64": "amd64",
+    "x86_64": "amd64",
+    "arm64": "arm64",
+    "aarch64": "arm64",
+}
 
 DEFAULT_DATASET_PATH, _ = toml_dataset_path()
 
@@ -52,91 +97,115 @@ def _rc_verbose_args(level: int) -> list[str]:
     return ["-" + "v" * min(max(level, 0), 3)] if level > 0 else []
 
 
+def _rclone_release() -> tuple[str, str, str] | None:
+    """Return the pinned archive definition for this platform."""
+    system = platform.system().lower()
+    architecture = ARCHITECTURE_ALIASES.get(platform.machine().lower())
+    release = RCLONE_RELEASES.get((system, architecture or ""))
+    if not release:
+        print(
+            "Unsupported rclone platform "
+            f"'{system}/{platform.machine().lower()}'. Please install rclone manually."
+        )
+    return release
+
+
+def _safe_extract_zip(archive: zipfile.ZipFile, destination: pathlib.Path) -> None:
+    """Extract a ZIP archive only when every member remains below destination."""
+    destination = destination.resolve()
+    for member in archive.infolist():
+        target = (destination / member.filename).resolve()
+        if not target.is_relative_to(destination):
+            raise ValueError(f"Unsafe path in rclone archive: {member.filename}")
+    archive.extractall(destination)
+
+
+def _download_rclone_archive(
+    archive_name: str,
+    expected_sha256: str,
+    install_root: pathlib.Path,
+) -> pathlib.Path:
+    """Download one pinned rclone archive and verify its SHA-256 checksum."""
+    archive_path = install_root / archive_name
+    url = f"https://downloads.rclone.org/v{RCLONE_VERSION}/{archive_name}"
+    print(f"Downloading rclone {RCLONE_VERSION} to {archive_path}...")
+    digest = hashlib.sha256()
+    try:
+        response = requests.get(url, stream=True, timeout=(10, 60))
+        response.raise_for_status()
+        with archive_path.open("wb") as file_handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    file_handle.write(chunk)
+                    digest.update(chunk)
+    except requests.RequestException as exc:
+        archive_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Could not download rclone: {exc}") from exc
+    except OSError as exc:
+        archive_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Could not save rclone archive: {exc}") from exc
+
+    if digest.hexdigest().lower() != expected_sha256.lower():
+        archive_path.unlink(missing_ok=True)
+        raise RuntimeError("Downloaded rclone archive failed SHA-256 verification.")
+    return archive_path
+
+
 def install_rclone(install_path: str = "./bin") -> bool:
-    """Download and extract rclone to the specified bin folder."""
+    """Ensure a project-local rclone executable and config path are available."""
 
     project_root = _project_root()
     install_root = (project_root / pathlib.Path(install_path)).resolve()
     install_root.mkdir(parents=True, exist_ok=True)
     rclone_config = install_root / "rclone.conf"
-
-    def download_rclone(install_path: str = "./bin"):
-        os_type = platform.system().lower()
-
-        # Set the URL and executable name based on the OS
-        if os_type == "windows":
-            url = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
-            rclone_executable = "rclone.exe"
-        elif os_type in ["linux", "darwin"]:
-            url = (
-                "https://downloads.rclone.org/rclone-current-linux-amd64.zip"
-                if os_type == "linux"
-                else "https://downloads.rclone.org/rclone-current-osx-amd64.zip"
-            )
-            rclone_executable = "rclone"
-        else:
-            print(f"Unsupported operating system: {os_type}. Please install rclone manually.")
-            return None
-
-        # Create the bin folder if it doesn't exist
-        install_path = str(project_root / pathlib.Path(install_path))
-        os.makedirs(install_path, exist_ok=True)
-
-        # Download rclone
-        local_zip = os.path.join(install_path, "rclone.zip")
-        print(f"Downloading rclone for {os_type} to {local_zip}...")
-        response = requests.get(url)
-        if response.status_code == 200:
-            with open(local_zip, "wb") as file:
-                file.write(response.content)
-            print("Download complete.")
-        else:
-            print("Failed to download rclone. Please check the URL.")
-            return None
-
-        # Extract the rclone executable
-        print("Extracting rclone...")
-        with zipfile.ZipFile(local_zip, "r") as zip_ref:
-            zip_ref.extractall(install_path)
-
-        rclone_folder = glob.glob(os.path.join(install_path, "rclone-*"))
-
-        if not rclone_folder or len(rclone_folder) > 1:
-            print(f"More than one 'rclone-*' folder detected in {install_path}")
-            return None
-
-        # Clean up by deleting the zip file
-        os.remove(local_zip)
-
-        rclone_path = os.path.join(install_path, rclone_folder[0], rclone_executable)
-        print(f"rclone installed successfully at {rclone_path}.")
-
-        rclone_path = os.path.abspath(rclone_path)
-        os.chmod(rclone_path, 0o755)
-        return rclone_path
+    rclone_dir: str
 
     if not is_installed("rclone", "Rclone", local_path="./bin"):
-        rclone_path = download_rclone(install_path)
-        if not rclone_path:
+        release = _rclone_release()
+        if not release:
             return False
-        rclone_dir = os.path.dirname(rclone_path)
+        archive_name, executable_name, expected_sha256 = release
+        archive_path: pathlib.Path | None = None
+        try:
+            archive_path = _download_rclone_archive(archive_name, expected_sha256, install_root)
+            print("Extracting rclone...")
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                _safe_extract_zip(archive, install_root)
+            extracted_dir = install_root / archive_name.removesuffix(".zip")
+            rclone_path = extracted_dir / executable_name
+            if not rclone_path.is_file():
+                print(f"Extracted rclone executable was not found: {rclone_path}")
+                return False
+            rclone_path.chmod(0o755)
+            print(f"rclone installed successfully at {rclone_path}.")
+        except (OSError, RuntimeError, ValueError, zipfile.BadZipFile) as exc:
+            print(f"Rclone installation failed: {exc}")
+            return False
+        finally:
+            if archive_path:
+                archive_path.unlink(missing_ok=True)
+        rclone_dir = str(extracted_dir)
     else:
         # Even when already installed, ensure process PATH includes the resolved local dir.
         rclone_dir = os.environ.get("RCLONE")
         if not rclone_dir:
-            rclone_dir = str((_project_root() / pathlib.Path(install_path)).resolve())
+            resolved = shutil.which("rclone")
+            rclone_dir = str(pathlib.Path(resolved).parent) if resolved else str(install_root)
 
     if not exe_to_path("rclone", rclone_dir):
         return False
 
-    # Prefer existing persisted config path; if missing, create and persist a local default.
-    resolved_rclone_config = load_from_env("RCLONE_CONFIG")
-    if not resolved_rclone_config:
-        resolved_rclone_config = str(rclone_config)
-        os.environ["RCLONE_CONFIG"] = resolved_rclone_config
+    # Keep rclone configuration project-local. An inherited process setting
+    # from another project must not redirect a new project's remote registry.
+    saved_rclone_config = load_from_env("RCLONE_CONFIG")
+    resolved_rclone_config = str(rclone_config)
+    if saved_rclone_config:
+        saved_path = pathlib.Path(saved_rclone_config).expanduser().resolve()
+        if saved_path == rclone_config:
+            resolved_rclone_config = str(saved_path)
+    if resolved_rclone_config != saved_rclone_config:
         save_to_env(resolved_rclone_config, "RCLONE_CONFIG")
-    else:
-        os.environ["RCLONE_CONFIG"] = resolved_rclone_config
+    os.environ["RCLONE_CONFIG"] = resolved_rclone_config
     print(f"rclone:config set to {resolved_rclone_config}")
     return True
 
@@ -152,7 +221,7 @@ def _rclone_transfer(
     exclude_patterns: list[str] = None,
     dry_run: bool = False,
     verbose: int = 0,
-):
+) -> bool:
     """
     Transfer files using rclone. Automatically uses ucloud config if remote is ucloud.
 
@@ -173,7 +242,7 @@ def _rclone_transfer(
 
     if operation not in {"sync", "copy", "move"}:
         print("Error: 'operation' must be either 'sync', 'copy', or 'move'")
-        return
+        return False
 
     # Build rclone command
     include_args = []
@@ -186,11 +255,11 @@ def _rclone_transfer(
 
     if src_kind not in {"local", "remote"}:
         print(f"Error: Invalid src_kind '{src_kind}'. Must be 'local' or 'remote'.")
-        return
+        return False
 
     if src_kind == "local" and not os.path.exists(src):
         print(f"Error: The folder '{src}' does not exist.")
-        return
+        return False
 
     command = (
         ["rclone", operation, src, dst] + _rc_verbose_args(verbose) + include_args + exclude_args
@@ -206,8 +275,8 @@ def _rclone_transfer(
         if rclone_conf.exists():
             command += ["--config", str(rclone_conf)]
         else:
-            print("⚠️ ucloud rclone config not found in ./bin. Please run set_host_port first.")
-            return
+            print("[WARN] UCloud rclone config not found in ./bin. Please run set_host_port first.")
+            return False
 
     if dry_run:
         command.append("--dry-run")
@@ -219,12 +288,15 @@ def _rclone_transfer(
         )
         print(f"Transfer '{src}' -> '{dst}' successfully {verb}.")
         update_sync_status(remote_name, action=action, operation=operation, success=True)
+        return True
     except subprocess.CalledProcessError as e:
         print(f"Failed to {operation} transfer '{src}' -> '{dst}': {e}")
         update_sync_status(remote_name, action=action, operation=operation, success=False)
+        return False
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         update_sync_status(remote_name, action=action, operation=operation, success=False)
+        return False
 
 
 def _normalize_select_subpath(select_path: str | None) -> str:
@@ -611,22 +683,24 @@ def push_rclone(
     verbose: int = 0,
     select_path: str | None = None,
     search_pattern: str | None = None,
-):
+) -> bool:
     """Push local files to remote."""
     os.chdir(_project_root())
 
     if not install_rclone("./bin"):
-        return
+        return False
 
     if remote_name.lower() == "all":
         if new_path is not None or local_path is not None:
             print("Error: --path and --remote-path cannot be used with --remote all.")
-            return
+            return False
         all_remotes = list(load_all_registry().keys())
     else:
         all_remotes = [remote_name]
 
     flag = False
+    attempted = False
+    all_succeeded = True
     registry = load_all_registry()
     for remote_name in all_remotes:
         remote_key = remote_name.lower()
@@ -638,12 +712,14 @@ def push_rclone(
 
         if push_policy == "pull-only":
             print(f"Skipping '{remote_name}': push policy is pull-only.")
+            all_succeeded = False
             continue
         if push_policy == "append-only" and operation in {"sync", "move"}:
             print(
                 f"Skipping '{remote_name}': push policy is append-only; "
                 f"operation '{operation}' is not allowed (use copy)."
             )
+            all_succeeded = False
             continue
 
         _remote_path, _local_path = load_registry(remote_key)
@@ -658,12 +734,14 @@ def push_rclone(
                 f"Remote '{remote_name}' has no saved remote path. "
                 "Provide --remote-path or pin a remote base first."
             )
+            all_succeeded = False
             continue
         if not effective_local_path:
             print(
                 f"Remote '{remote_name}' has no saved local source. "
                 "Provide --path or create a full mapping."
             )
+            all_succeeded = False
             continue
         if rclone_commit:
             flag = rclone_commit(
@@ -693,10 +771,12 @@ def push_rclone(
                 select_path,
             )
             if selected is None:
+                all_succeeded = False
                 continue
             include_patterns = selected
 
-        _rclone_transfer(
+        attempted = True
+        succeeded = _rclone_transfer(
             remote_name=remote_key,
             src=transfer_src,
             dst=transfer_dst,
@@ -708,6 +788,8 @@ def push_rclone(
             dry_run=dry_run,
             verbose=verbose,
         )
+        all_succeeded = all_succeeded and succeeded
+    return attempted and all_succeeded
 
 
 def pull_rclone(
@@ -719,19 +801,19 @@ def pull_rclone(
     verbose: int = 0,
     select_path: str | None = None,
     search_pattern: str | None = None,
-):
+) -> bool:
     """Pull files from remote to local."""
     if remote_name is None:
         print("Error: No remote specified for pulling backup.")
-        return
+        return False
     if remote_name.lower() == "all":
         print("Error: Pulling from 'all' remotes is not supported.")
-        return
+        return False
 
     os.chdir(_project_root())
 
     if not install_rclone("./bin"):
-        return
+        return False
 
     _remote_path, _local_path = load_registry(remote_name.lower())
     registry = load_all_registry()
@@ -759,7 +841,7 @@ def pull_rclone(
                 f"Remote '{remote_name}' has no saved mapping with a local path. "
                 "Provide --path for pull destination."
             )
-            return
+            return False
         if not effective_remote_path:
             effective_remote_path = f"{remote_name.lower()}:"
             print(
@@ -769,13 +851,16 @@ def pull_rclone(
 
     if not effective_remote_path:
         print(f"Error: No remote source path resolved for '{remote_name}'.")
-        return
+        return False
     if not effective_local_path:
         print(f"Error: No local destination path resolved for '{remote_name}'.")
-        return
+        return False
 
-    if not os.path.exists(effective_local_path):
-        os.makedirs(effective_local_path)
+    try:
+        os.makedirs(effective_local_path, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: Could not create pull destination '{effective_local_path}': {exc}")
+        return False
     if rclone_commit:
         _ = rclone_commit(
             effective_local_path,
@@ -808,7 +893,7 @@ def pull_rclone(
             select_path,
         )
         if selected is None:
-            return
+            return False
         include_patterns = selected
         # Ensure local parent path exists for direct file selections.
         normalized = _normalize_select_subpath(select_path)
@@ -816,10 +901,13 @@ def pull_rclone(
             local_target = pathlib.Path(transfer_local_path) / pathlib.Path(normalized)
             local_target.parent.mkdir(parents=True, exist_ok=True)
 
-    if not os.path.exists(transfer_local_path):
+    try:
         os.makedirs(transfer_local_path, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: Could not create pull destination '{transfer_local_path}': {exc}")
+        return False
 
-    _rclone_transfer(
+    return _rclone_transfer(
         remote_name=remote_name.lower(),
         src=transfer_remote_path,
         dst=transfer_local_path,
@@ -833,22 +921,19 @@ def pull_rclone(
     )
 
 
-def rclone_diff_report(local_path: str, remote_path: str):
-    """Quick diff between local folder and remote path, handles ucloud remote."""
+def rclone_diff_report(local_path: str, remote_path: str) -> bool:
+    """Generate a dry-run rclone diff report and return whether it completed."""
     import tempfile
-    import pathlib
 
-    cmd = ["rclone", "diff"]
-
-    # Handle ucloud remote
+    command = ["rclone", "diff"]
     if _is_ucloud_remote(_remote_name_from_uri(remote_path)):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if not rclone_conf.exists():
-            print("⚠️ ucloud rclone config not found in ./bin. Cannot run diff.")
-            return
-        cmd += ["--config", str(rclone_conf)]
+            print("[WARN] UCloud rclone config not found in ./bin. Cannot run diff.")
+            return False
+        command += ["--config", str(rclone_conf)]
 
-    cmd += [
+    command += [
         local_path,
         remote_path,
         "--no-traverse",
@@ -858,44 +943,46 @@ def rclone_diff_report(local_path: str, remote_path: str):
         "--dry-run",
     ]
 
-    with tempfile.NamedTemporaryFile() as temp:
-        cmd += ["--output", temp.name]
-        try:
-            subprocess.run(cmd, check=True, timeout=DEFAULT_TIMEOUT)
-            with open(temp.name) as f:
-                diff_output = f.read()
-            print(diff_output or "[No differences]")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to generate diff report: {e}")
+    fd, output_name = tempfile.mkstemp(prefix="repokit-rclone-diff-", suffix=".txt")
+    os.close(fd)
+    try:
+        subprocess.run(command + ["--output", output_name], check=True, timeout=DEFAULT_TIMEOUT)
+        diff_output = pathlib.Path(output_name).read_text(encoding="utf-8")
+        print(diff_output or "[No differences]")
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"Failed to generate diff report: {exc}")
+        return False
+    finally:
+        pathlib.Path(output_name).unlink(missing_ok=True)
 
 
-def generate_diff_report(remote_name: str):
-    """Generate diff report between local and remote using the reusable diff function."""
+def generate_diff_report(remote_name: str) -> bool:
+    """Generate a diff report for one remote or every registered remote."""
 
-    def run_diff(remote: str):
+    def run_diff(remote: str) -> bool:
         remote_path, local_path = load_registry(remote)
         if not remote_path or not local_path:
             print(f"No path found for remote '{remote}'.")
-            return
-        print(f"\n📊 Diff report for '{remote}':")
-        rclone_diff_report(local_path, remote_path)
+            return False
+        print(f"\nDiff report for '{remote}':")
+        return rclone_diff_report(local_path, remote_path)
 
     if remote_name.lower() == "all":
-        for remote in load_all_registry().keys():
-            run_diff(remote)
-    else:
-        run_diff(remote_name)
+        remotes = list(load_all_registry().keys())
+        if not remotes:
+            print("No remotes found.")
+            return False
+        return all(run_diff(remote) for remote in remotes)
+    return run_diff(remote_name)
 
 
 def list_remote_entries(
     remote_name: str,
     sub_path: str = "",
     search_pattern: str | None = None,
-):
-    """
-    List files/folders for a remote.
-    Uses configured mapping when present; otherwise defaults to remote root.
-    """
+) -> bool:
+    """List or search a remote path and return whether rclone completed."""
     remote_name = (remote_name or "").strip().lower()
     remote_path, _ = load_registry(remote_name)
     if not remote_path:
@@ -905,40 +992,42 @@ def list_remote_entries(
     normalized_search, anchored_to_root = _normalize_search_pattern(search_pattern)
     if normalized_search:
         target = _remote_root(remote_name) if anchored_to_root else target
-        cmd = ["rclone", "lsf", target, "--recursive", "--include", normalized_search]
+        command = ["rclone", "lsf", target, "--recursive", "--include", normalized_search]
     else:
-        cmd = ["rclone", "lsf", target, "--max-depth", "1"]
+        command = ["rclone", "lsf", target, "--max-depth", "1"]
 
     if _is_ucloud_remote(remote_name) or _is_ucloud_remote(_remote_name_from_uri(str(target))):
         rclone_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
         if rclone_conf.exists():
-            cmd += ["--config", str(rclone_conf)]
+            command += ["--config", str(rclone_conf)]
         else:
-            print("[WARN] ucloud rclone config not found in ./bin. Please run set_host_port first.")
-            return
+            print("[WARN] UCloud rclone config not found in ./bin. Please run set_host_port first.")
+            return False
 
     try:
         result = subprocess.run(
-            cmd,
+            command,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=DEFAULT_TIMEOUT,
         )
-        entries = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        if normalized_search:
-            print(f"\nRemote search for '{remote_name}': {target} | pattern={normalized_search}")
-        else:
-            print(f"\nRemote listing for '{remote_name}': {target}")
-        if not entries:
-            print("[No matches]" if normalized_search else "[Empty]")
-            return
-        for entry in sorted(entries, key=lambda s: (not s.endswith("/"), s.lower())):
-            print(f"  {entry}")
-    except subprocess.CalledProcessError as e:
+    except (OSError, subprocess.CalledProcessError) as exc:
         action = "search" if normalized_search else "list"
-        print(f"Failed to {action} remote entries at '{target}': {e}")
+        print(f"Failed to {action} remote entries at '{target}': {exc}")
+        return False
+
+    entries = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if normalized_search:
+        print(f"\nRemote search for '{remote_name}': {target} | pattern={normalized_search}")
+    else:
+        print(f"\nRemote listing for '{remote_name}': {target}")
+    if not entries:
+        print("[No matches]" if normalized_search else "[Empty]")
+        return True
+    for entry in sorted(entries, key=lambda item: (not item.endswith("/"), item.lower())):
+        print(f"  {entry}")
+    return True
 
 
 def transfer_between_remotes(
@@ -947,12 +1036,8 @@ def transfer_between_remotes(
     operation: str = "copy",
     dry_run: bool = True,
     verbose: int = 0,
-):
-    """
-    Transfer data from one remote to another.
-
-    Safeguard: Only allowed if both remotes share the same local_path.
-    """
+) -> bool:
+    """Transfer between compatible mapped remotes and return the rclone result."""
     all_remotes = load_all_registry()
     src_meta = all_remotes.get(source_remote)
     dst_meta = all_remotes.get(dest_remote)
@@ -961,43 +1046,40 @@ def transfer_between_remotes(
         print(
             f"Error: One or both remotes not registered. Source: {source_remote}, Destination: {dest_remote}"
         )
-        return
+        return False
 
     src_local = src_meta.get("local_path")
     dst_local = dst_meta.get("local_path")
-
     if not src_local or not dst_local:
         print("Error: One or both remotes do not have local paths configured.")
-        return
-
+        return False
     if os.path.abspath(src_local) != os.path.abspath(dst_local):
         print("Error: Cannot transfer between remotes with different local paths.")
         print(f"Source local path: {src_local}")
         print(f"Destination local path: {dst_local}")
-        return
+        return False
 
     src_path = src_meta.get("remote_path")
     dst_path = dst_meta.get("remote_path")
-
-    print(f"\n🔁 Transfer from '{source_remote}' to '{dest_remote}'")
-    print(f"Local path (shared): {src_local}")
-    print(f"Remote paths: {src_path} → {dst_path}")
-    print(f"Operation: {operation} | Dry run: {dry_run}\n")
-
+    if not src_path or not dst_path:
+        print("Error: One or both remotes do not have remote paths configured.")
+        return False
     if operation not in {"copy", "sync"}:
         print("Error: Only 'copy' or 'sync' operations are allowed for remote-to-remote transfers.")
-        return
+        return False
 
-    exclude_patterns = _exclude_patterns(src_local)
-
-    _rclone_transfer(
+    print(f"\nTransfer from '{source_remote}' to '{dest_remote}'")
+    print(f"Local path (shared): {src_local}")
+    print(f"Remote paths: {src_path} -> {dst_path}")
+    print(f"Operation: {operation} | Dry run: {dry_run}\n")
+    return _rclone_transfer(
         remote_name=f"{source_remote}->{dest_remote}",
         src=src_path,
         dst=dst_path,
         src_kind="remote",
         action="transfer",
         operation=operation,
-        exclude_patterns=exclude_patterns,
+        exclude_patterns=_exclude_patterns(src_local),
         dry_run=dry_run,
         verbose=verbose,
     )

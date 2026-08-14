@@ -31,27 +31,44 @@ Notes:
 
 - `README.md`: installation, quick start, and common workflows
 - [`docs/api-reference.md`](docs/api-reference.md): full CLI, backend, mapping, policy, and transfer behavior reference
+- [`CHANGELOG.md`](CHANGELOG.md): user-visible release history
+- [`SECURITY.md`](SECURITY.md): supported-version and vulnerability reporting policy
+- [`RELEASE.md`](RELEASE.md): maintainer release procedure
 
 ## Installation
 
-`repokit-backup` is not published on PyPI yet. Use local wheel/source installation.
+`repokit-backup` is distributed as GitHub release wheels. Install the supported
+`repokit-common` release first; backup 1.0.0 requires Common 0.1.x.
 
-Install from local wheel files (`/dist`):
+Install the 1.0.0 release:
 
 ```bash
-# 1) Install dependency wheel first
-pip install https://github.com/CBS-HPC/repokit-common/raw/main/dist/repokit_common-0.1-py3-none-any.whl
+# 1) Install the required Common release
+python -m pip install https://github.com/CBS-HPC/repokit-common/releases/download/v0.1.0/repokit_common-0.1.0-py3-none-any.whl
 
-# 2) Install repokit-backup wheel
-pip install https://github.com/CBS-HPC/repokit-backup/raw/main/dist/repokit_backup-0.1-py3-none-any.whl
+# 2) Install backup
+python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.0/repokit_backup-1.0.0-py3-none-any.whl
 ```
 
-If you are installing into a fresh virtual environment, install in this order so `repokit-common` is available before `repokit-backup`.
-Wheel filenames include version tags and may change over time.
+For a development checkout, use `python -m pip install -e .` only after
+installing a compatible `repokit-common>=0.1.0,<0.2.0`.
 
 ## Requirements
 
-- `rclone` on `PATH` (auto-installed if missing)
+- Python 3.10 or newer
+- `rclone` is optional: if absent, the tool installs a checksum-verified,
+  project-local rclone 1.73.2 binary
+
+## Runtime State And Secrets
+
+Run `repokit-backup init` before configuring remotes in a project. It creates
+the project-local `bin/` runtime directory, configures rclone, and updates
+`.gitignore` with `.env` and `bin/`. These locations can contain rclone OAuth
+tokens, SFTP key references, or object-storage credentials. Do not commit,
+share, or place this state in a public archive.
+
+See [`SECURITY.md`](SECURITY.md) for the supported-version policy and
+credential-handling guidance.
 
 ## CLI
 
@@ -85,6 +102,7 @@ This ensures:
 - `./bin/` exists under the current project root
 - `rclone` is installed or made available from that `./bin/`
 - `pyproject.toml` exists with `[tool.rcloneignore]` defaults
+- `.gitignore` excludes project-local `.env` and `bin/` runtime state
 
 Common setup examples:
 

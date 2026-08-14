@@ -123,7 +123,7 @@ def _delete_config_if_no_remotes(config_path: pathlib.Path | None = None):
         print(f"Could not delete config file '{target}': {e}")
 
 
-def _delete_single_remote(remote_name: str, verbose: int = 0):
+def _delete_single_remote(remote_name: str, verbose: int = 0) -> bool:
     """Delete one remote mapping and cleanup config files when empty."""
     remote_name = remote_name.strip().lower()
     remote_path, _ = load_registry(remote_name)
@@ -149,9 +149,11 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
             subprocess.run(purge_cmd, check=True, timeout=DEFAULT_TIMEOUT)
             print(f"Successfully purged remote folder: {remote_path}")
         except subprocess.CalledProcessError as e:
-            print(f"Warning: Could not purge remote folder '{remote_path}': {e}")
-        except Exception as e:
+            print(f"Could not purge remote folder '{remote_path}': {e}")
+            return False
+        except OSError as e:
             print(f"Unexpected error during purge: {e}")
+            return False
     elif remote_path:
         print(f"Remote path for '{remote_name}' is externally owned. Skipping purge: {remote_path}")
     else:
@@ -164,16 +166,19 @@ def _delete_single_remote(remote_name: str, verbose: int = 0):
     try:
         subprocess.run(delete_cmd, check=True, timeout=DEFAULT_TIMEOUT)
         print(f"Rclone remote '{remote_name}' deleted from rclone configuration.")
-    except subprocess.CalledProcessError as e:
+    except (OSError, subprocess.CalledProcessError) as e:
         print(f"Error deleting remote from rclone: {e}")
+        return False
 
-    delete_from_registry(remote_name)
+    if not delete_from_registry(remote_name):
+        return False
 
     # Always cleanup empty config files after single-remote deletion.
     _delete_config_if_no_remotes()
     ucloud_conf = pathlib.Path("./bin/rclone_ucloud.conf").resolve()
     if ucloud_conf.exists():
         _delete_config_if_no_remotes(ucloud_conf)
+    return True
 
 
 def _add_erda_remote(remote_name: str, login: str, pass_key: str | None):
@@ -882,7 +887,7 @@ def setup_rclone(
         return install_rclone("./bin")
 
 
-def delete_remote(remote_name: str, verbose: int = 0):
+def delete_remote(remote_name: str, verbose: int = 0) -> bool:
     """Delete one remote or all remotes (`remote_name='all'`)."""
     remote_name = remote_name.strip().lower()
 
@@ -899,7 +904,7 @@ def delete_remote(remote_name: str, verbose: int = 0):
             _delete_config_if_no_remotes()
             if ucloud_conf.exists():
                 _delete_config_if_no_remotes(ucloud_conf)
-            return
+            return True
 
         externally_owned = sorted(
             name
@@ -915,11 +920,10 @@ def delete_remote(remote_name: str, verbose: int = 0):
             f"Really delete all remote configurations ({', '.join(all_remotes)})?{warning} [y/N]: "
         )
         if confirm.lower() != "y":
-            return
+            return True
 
-        for name in all_remotes:
-            _delete_single_remote(name, verbose=verbose)
-        return
+        results = [_delete_single_remote(name, verbose=verbose) for name in all_remotes]
+        return all(results)
 
     entry = load_all_registry().get(remote_name, {})
     ownership = entry.get("remote_path_ownership") if isinstance(entry, dict) else None
@@ -932,9 +936,9 @@ def delete_remote(remote_name: str, verbose: int = 0):
         )
     confirm = input(prompt)
     if confirm.lower() != "y":
-        return
+        return True
 
-    _delete_single_remote(remote_name, verbose=verbose)
+    return _delete_single_remote(remote_name, verbose=verbose)
 
 
 def list_supported_remote_types() -> str:

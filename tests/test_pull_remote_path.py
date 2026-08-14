@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 
-def test_pull_safeguard_when_mapping_missing_and_paths_not_provided(
-    monkeypatch, capsys
-):
+def test_pull_safeguard_when_mapping_missing_and_paths_not_provided(monkeypatch, capsys):
     from repokit_backup import rclone
 
     monkeypatch.setattr(rclone, "install_rclone", lambda *_args, **_kwargs: True)
@@ -130,9 +128,7 @@ def test_pull_search_absolute_pattern_from_root_preserves_structure(monkeypatch)
     assert captured["include_patterns"] == ["taqtrade_202001*"]
 
 
-def test_pull_defaults_to_remote_root_when_mapping_missing_and_only_path_given(
-    monkeypatch, capsys
-):
+def test_pull_defaults_to_remote_root_when_mapping_missing_and_only_path_given(monkeypatch, capsys):
     from repokit_backup import rclone
 
     captured = {}

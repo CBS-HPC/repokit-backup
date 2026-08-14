@@ -5,7 +5,12 @@ Exports are kept lazy so CLI startup can resolve the runtime project root
 before root-sensitive modules are imported.
 """
 
-from .cli import main
+
+def main(*args, **kwargs):
+    """Run the command-line interface without importing root-sensitive modules early."""
+    from .cli import main as _main
+
+    return _main(*args, **kwargs)
 
 
 def push_rclone(*args, **kwargs):

@@ -226,20 +226,26 @@ def update_sync_status(
         print(f"Failed to update sync status: {e}")
 
 
-def delete_from_registry(remote_name: str, json_path: str = "./bin/rclone_remote.json"):
-    """Remove remote from registry."""
-    if os.path.exists(json_path):
-        try:
-            with open(json_path, "r+") as f:
-                data = json.load(f)
-                if remote_name in data:
-                    del data[remote_name]
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(data, f, indent=2)
-                    print(f"Removed '{remote_name}' entry from {json_path}.")
-        except Exception as e:
-            print(f"Error updating JSON config: {e}")
+def delete_from_registry(remote_name: str, json_path: str = "./bin/rclone_remote.json") -> bool:
+    """Remove one remote from the registry atomically."""
+    if not os.path.exists(json_path):
+        return True
+    try:
+        with open(json_path, encoding="utf-8") as file_handle:
+            data = json.load(file_handle)
+        if not isinstance(data, dict):
+            print(f"Error updating JSON config: registry is not a JSON object: {json_path}")
+            return False
+        remote_key = (remote_name or "").strip().lower()
+        if remote_key not in data:
+            return True
+        del data[remote_key]
+        _atomic_write_json(json_path, data)
+        print(f"Removed '{remote_key}' entry from {json_path}.")
+        return True
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error updating JSON config: {exc}")
+        return False
 
 
 def set_push_policy(

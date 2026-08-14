@@ -18,6 +18,11 @@ At startup, the CLI:
 - changes working directory to that root
 - ensures `rclone` is installed and configured locally
 - ensures `pyproject.toml` contains `[tool.rcloneignore]` defaults
+- ensures `.gitignore` excludes the local `.env` file and `bin/` runtime state
+
+The automatic installer uses the pinned, SHA-256-verified rclone 1.73.2
+release archive for the detected Windows, Linux, or macOS architecture. If a
+working `rclone` is already available, repokit-backup uses it instead.
 
 Implemented backend families in the current codebase:
 
@@ -250,6 +255,7 @@ Notes:
 
 - `init` is intended to be run from the project root
 - unlike other commands, root resolution for `init` uses the current working directory by default instead of walking upward to older backup markers
+- adds `.env` and `bin/` to `.gitignore` without removing existing entries
 
 ### `add`
 
@@ -540,10 +546,15 @@ Arguments:
 
 Behavior:
 
-- attempts remote purge
+- purges a remote folder only when its mapping marks it as `managed`
+- never purges an externally owned pinned path
 - removes rclone config entry
 - removes registry entry
 - deletes empty config file when applicable
+
+If rclone cannot purge a managed folder or remove its config entry, deletion
+stops and the command exits nonzero. This avoids claiming that a remote was
+deleted when its configuration still exists.
 
 Special handling:
 
@@ -693,6 +704,23 @@ Schema example:
 - `append-only` blocks destructive push modes
 - `pull-only` blocks push entirely
 - `--search` and `--select` are currently mutually exclusive for `push` and `pull`
+
+## Exit Status
+
+`repokit-backup` exits with status `0` after a completed operation, including a
+cancelled destructive-delete confirmation. It exits nonzero when rclone or a
+required local operation fails. Invalid command-line combinations exit with
+status `2`. Automation should check the process exit status rather than parse
+printed output.
+
+## Credential Storage
+
+Repokit-common persists environment-backed configuration such as OAuth tokens,
+LUMI credentials, and `RCLONE_CONFIG` in the project-local runtime state. The
+CLI adds `.env` and `bin/` to `.gitignore` during initialization because these
+locations can hold sensitive data. Keep them out of Git, logs, and shared
+archives. Use the `*-file` options for non-interactive secrets instead of
+putting credentials in shell history.
 
 ## Examples
 
