@@ -38,20 +38,21 @@ Notes:
 ## Installation
 
 `repokit-backup` is distributed as GitHub release wheels. Install the supported
-`repokit-common` release first; backup 1.0.0 requires Common 0.1.x.
+`repokit-common` release first; backup 1.0.0 supports Common versions from
+0.1.0 through 1.0.0.
 
 Install the 1.0.0 release:
 
 ```bash
-# 1) Install the required Common release
-python -m pip install https://github.com/CBS-HPC/repokit-common/releases/download/v0.1.0/repokit_common-0.1.0-py3-none-any.whl
+# 1) Install a compatible Common release (1.0.0 shown)
+python -m pip install https://github.com/CBS-HPC/repokit-common/releases/download/v1.0.0/repokit_common-1.0.0-py3-none-any.whl
 
 # 2) Install backup
 python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.0/repokit_backup-1.0.0-py3-none-any.whl
 ```
 
 For a development checkout, use `python -m pip install -e .` only after
-installing a compatible `repokit-common>=0.1.0,<0.2.0`.
+installing a compatible `repokit-common>=0.1.0,<=1.0.0`.
 
 ## Requirements
 

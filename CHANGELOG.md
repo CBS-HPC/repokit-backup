@@ -25,6 +25,7 @@ All notable user-visible changes are recorded here. This project follows
   initialization.
 - `backup` remains a compatibility alias; new documentation and automation
   should use `repokit-backup`.
+- Supports `repokit-common>=0.1.0,<=1.0.0`.
 
 ### Security
 

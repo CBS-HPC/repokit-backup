@@ -6,20 +6,21 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }} / Common ${{ matrix.common-ref }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.12"]
+        common-ref: ["v0.1.0", "v1.0.0"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: CBS-HPC/repokit-common
           path: repokit-common
-          ref: v0.1.0
+          ref: ${{ matrix.common-ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

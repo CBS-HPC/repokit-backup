@@ -28,7 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.31,<3",
-    "repokit-common>=0.1.0,<0.2.0",
+    "repokit-common>=0.1.0,<=1.0.0",
 ]
 requires-python = ">=3.10"
 

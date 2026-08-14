@@ -1,12 +1,12 @@
 # Release Procedure
 
 Use this procedure for a repokit-backup release after the required
-`repokit-common` 0.1.x is published.
+`repokit-common` 0.1.0 through 1.0.0 is published.
 
 ## Prerequisites
 
-- `repokit-common` 0.1.x is tagged and its wheel is available from its GitHub
-  release.
+- A supported `repokit-common` version (0.1.0 through 1.0.0) is tagged and
+  its wheel is available from its GitHub release.
 - The backup branch is reviewed, clean, and synchronized with its target.
 - `CHANGELOG.md` has a dated release entry and `pyproject.toml` has the final
   semantic version.
