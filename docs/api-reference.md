@@ -302,6 +302,26 @@ Backend-specific setup behavior:
 - `local`: prompts for a local target path
 - `sftp`, `s3`: falls back to interactive `rclone config create`
 
+#### Dropbox Business paths
+
+For Dropbox, a leading slash is significant to rclone and selects the
+Dropbox team root rather than the personal/member namespace:
+
+```text
+moody-dropbox:folder     # personal/member namespace
+moody-dropbox:/folder    # Dropbox team root
+```
+
+Use paths such as `/Team Folder - (LIB)/myproject` for team-folder mappings.
+Verify the configured alias can see the team root before saving a mapping:
+
+```bash
+rclone lsd "moody-dropbox:/"
+```
+
+This is Dropbox-specific behavior. It does not imply that leading slashes
+have the same provider semantics for other rclone backends.
+
 Notes:
 
 - `--subdir` is relative to the detected project root
@@ -598,6 +618,12 @@ Accepted forms:
 
 - full rclone URI: `myproject:/archive`
 - remote-scoped path when `--remote` is already given: `/archive`
+
+`remote_path` values are opaque rclone paths. Consumers must preserve their
+exact form, including a leading slash, rather than stripping or normalizing
+them. This is required for Dropbox Business mappings, where
+`moody-dropbox:folder` and `moody-dropbox:/folder` address different
+namespaces. Use `/Team Folder - (LIB)/...` for Dropbox team-folder mappings.
 
 ## OAuth and SSH Mode
 

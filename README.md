@@ -168,6 +168,30 @@ repokit-backup pull --remote myproject --path ./restore
 
 Use `repokit-backup pin --remote myproject --remote-path "/shared/team-research/myproject"` to add a pin to an already registered unmapped remote. Full mappings are protected from replacement by `pin`.
 
+### Dropbox Business Paths
+
+Dropbox interprets the leading slash in an rclone path differently from its
+personal/member namespace. Preserve it when configuring a Dropbox Business
+team-folder mapping:
+
+```text
+moody-dropbox:folder     # personal/member namespace
+moody-dropbox:/folder    # Dropbox team root
+```
+
+Use a leading slash for team folders, for example
+`/Team Folder - (LIB)/myproject`. A saved `remote_path` is an opaque rclone
+path: consumers of the mapping must not strip or normalize its leading slash.
+This behavior is provider-specific and must not be inferred for other
+backends.
+
+Verify that the configured alias can access the Dropbox team root before
+creating a mapping:
+
+```bash
+rclone lsd "moody-dropbox:/"
+```
+
 ## Common Workflows
 
 Push to remote:
