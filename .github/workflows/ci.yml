@@ -19,12 +19,12 @@ jobs:
         with:
           repository: CBS-HPC/repokit-common
           path: repokit-common
-          ref: main
+          ref: v0.1.0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -U pip
-      - run: pip install -e ./repokit-common --no-deps
+      - run: pip install -e ./repokit-common
       - run: pip install -e . --no-deps
       - run: pip install "requests>=2.31,<3" build==1.4.0 mypy==1.18.2 pytest==9.0.2 ruff==0.14.0
       - run: python -m ruff check .
