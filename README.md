@@ -31,6 +31,7 @@ Notes:
 
 - `README.md`: installation, quick start, and common workflows
 - [`docs/api-reference.md`](docs/api-reference.md): full CLI, backend, mapping, policy, and transfer behavior reference
+- [`docs/dropbox-team-folder-guide.md`](docs/dropbox-team-folder-guide.md): browser-based Dropbox Business Team Folder setup on Windows and UCloud
 - [`CHANGELOG.md`](CHANGELOG.md): user-visible release history
 - [`SECURITY.md`](SECURITY.md): supported-version and vulnerability reporting policy
 - [`RELEASE.md`](RELEASE.md): maintainer release procedure
