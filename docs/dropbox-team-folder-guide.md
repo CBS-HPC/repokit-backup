@@ -62,7 +62,7 @@ Install the packages:
 
 ```bash
 python -m pip install https://github.com/CBS-HPC/repokit-common/releases/download/v1.0.0/repokit_common-1.0.0-py3-none-any.whl
-python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.0/repokit_backup-1.0.0-py3-none-any.whl
+python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.1/repokit_backup-1.0.1-py3-none-any.whl
 ```
 
 Initialize the project:
@@ -153,6 +153,10 @@ repokit-backup push \
 `--mode copy` is appropriate for selected-file transfers because it does not
 delete files at the destination. The default `sync` mode mirrors directories
 and can delete destination files that do not exist at the source.
+
+Large transfers have no total time limit by default. To enforce a job-specific
+limit, add `--transfer-timeout SECONDS`, for example
+`--transfer-timeout 14400` for four hours.
 
 ## Start A New UCloud Container
 

@@ -221,6 +221,7 @@ def _rclone_transfer(
     exclude_patterns: list[str] = None,
     dry_run: bool = False,
     verbose: int = 0,
+    transfer_timeout: float | None = None,
 ) -> bool:
     """
     Transfer files using rclone. Automatically uses ucloud config if remote is ucloud.
@@ -235,6 +236,7 @@ def _rclone_transfer(
         exclude_patterns: List of patterns to exclude
         dry_run: If True, show what would be done
         verbose: Verbosity level (0-3)
+        transfer_timeout: Optional total process limit in seconds; None is unlimited
     """
     exclude_patterns = exclude_patterns or []
     include_patterns = include_patterns or []
@@ -282,13 +284,23 @@ def _rclone_transfer(
         command.append("--dry-run")
 
     try:
-        subprocess.run(command, check=True, timeout=DEFAULT_TIMEOUT)
+        if transfer_timeout is None:
+            subprocess.run(command, check=True)
+        else:
+            subprocess.run(command, check=True, timeout=transfer_timeout)
         verb = {"sync": "synchronized", "copy": "copied", "move": "moved (deleted at origin)"}.get(
             operation, operation
         )
         print(f"Transfer '{src}' -> '{dst}' successfully {verb}.")
         update_sync_status(remote_name, action=action, operation=operation, success=True)
         return True
+    except subprocess.TimeoutExpired:
+        print(
+            f"Transfer '{src}' -> '{dst}' exceeded the configured total transfer timeout "
+            f"of {transfer_timeout:g} seconds. Rerun the transfer to continue."
+        )
+        update_sync_status(remote_name, action=action, operation=operation, success=False)
+        return False
     except subprocess.CalledProcessError as e:
         print(f"Failed to {operation} transfer '{src}' -> '{dst}': {e}")
         update_sync_status(remote_name, action=action, operation=operation, success=False)
@@ -683,6 +695,7 @@ def push_rclone(
     verbose: int = 0,
     select_path: str | None = None,
     search_pattern: str | None = None,
+    transfer_timeout: float | None = None,
 ) -> bool:
     """Push local files to remote."""
     os.chdir(_project_root())
@@ -787,6 +800,7 @@ def push_rclone(
             exclude_patterns=exclude_patterns,
             dry_run=dry_run,
             verbose=verbose,
+            transfer_timeout=transfer_timeout,
         )
         all_succeeded = all_succeeded and succeeded
     return attempted and all_succeeded
@@ -801,6 +815,7 @@ def pull_rclone(
     verbose: int = 0,
     select_path: str | None = None,
     search_pattern: str | None = None,
+    transfer_timeout: float | None = None,
 ) -> bool:
     """Pull files from remote to local."""
     if remote_name is None:
@@ -918,6 +933,7 @@ def pull_rclone(
         exclude_patterns=exclude_patterns,
         dry_run=dry_run,
         verbose=verbose,
+        transfer_timeout=transfer_timeout,
     )
 
 
@@ -1036,6 +1052,7 @@ def transfer_between_remotes(
     operation: str = "copy",
     dry_run: bool = True,
     verbose: int = 0,
+    transfer_timeout: float | None = None,
 ) -> bool:
     """Transfer between compatible mapped remotes and return the rclone result."""
     all_remotes = load_all_registry()
@@ -1082,4 +1099,5 @@ def transfer_between_remotes(
         exclude_patterns=_exclude_patterns(src_local),
         dry_run=dry_run,
         verbose=verbose,
+        transfer_timeout=transfer_timeout,
     )

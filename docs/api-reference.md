@@ -377,6 +377,7 @@ Arguments:
 - `--path`: override mapped local source
 - `--search`: non-interactive recursive source filter
 - `--select`: interactive source selection
+- `--transfer-timeout SECONDS`: optional total limit per rclone invocation; `0` is unlimited
 
 Behavior:
 
@@ -388,6 +389,7 @@ Behavior:
 - reads ignore patterns from `[tool.rcloneignore]` if the local source is the project root
 - excludes nested child mappings automatically
 - commits through `repokit.vcs.rclone_commit` when that integration is available
+- has no total wall-clock deadline by default; set `--transfer-timeout` to enforce one
 
 Search/filter rules:
 
@@ -417,6 +419,7 @@ Arguments:
 - `--path`, `--local-path`, `--local_path`: override local destination
 - `--search`: non-interactive recursive source filter
 - `--select`: interactive source selection
+- `--transfer-timeout SECONDS`: optional total limit per rclone invocation; `0` is unlimited
 
 Mapped remote behavior:
 
@@ -432,6 +435,8 @@ Unmapped remote behavior:
 This makes ad hoc restore possible even before a persistent mapping has been created.
 
 For remote-only pins, source defaults to the pinned remote path and `--path` is required.
+
+Pull has no total wall-clock deadline by default; set `--transfer-timeout` to enforce one.
 
 Search/filter rules:
 
@@ -571,12 +576,14 @@ Arguments:
 - `--destination`
 - `--mode copy|sync`
 - `--confirm`
+- `--transfer-timeout SECONDS`: optional total limit per rclone invocation; `0` is unlimited
 
 Restrictions:
 
 - both remotes must exist in the registry
 - both remotes must share the same `local_path`
 - only `copy` and `sync` are allowed
+- transfers have no total wall-clock deadline by default
 
 ### `types`
 

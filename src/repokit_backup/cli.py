@@ -5,6 +5,7 @@ CLI interface - Argument parsing and command dispatch.
 import argparse
 import importlib
 import json
+import math
 import os
 import pathlib
 import sys
@@ -15,6 +16,17 @@ from .remote_types import CANONICAL_BACKENDS, normalize_backend
 
 SUPPORTED_BACKENDS = CANONICAL_BACKENDS
 RUNTIME_GITIGNORE_ENTRIES = (".env", "bin/")
+
+
+def _parse_transfer_timeout(value: str) -> float | None:
+    """Parse a total transfer limit where zero disables the limit."""
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a number of seconds") from exc
+    if not math.isfinite(timeout) or timeout < 0:
+        raise argparse.ArgumentTypeError("must be zero or a positive number of seconds")
+    return None if timeout == 0 else timeout
 
 
 def _repokit_common_module():
@@ -480,6 +492,12 @@ def main():
         default=None,
         help="Interactively select files/folders to transfer. Optional subpath scope (e.g. --select /data).",
     )
+    push.add_argument(
+        "--transfer-timeout",
+        type=_parse_transfer_timeout,
+        metavar="SECONDS",
+        help="Total transfer limit per remote; 0 or omission allows unlimited duration.",
+    )
 
     # Pull command
     pull = subparsers.add_parser("pull", help="Pull/restore from remote")
@@ -525,6 +543,12 @@ def main():
         default=None,
         help="Interactively select files/folders to transfer. Optional subpath scope (e.g. --select /data).",
     )
+    pull.add_argument(
+        "--transfer-timeout",
+        type=_parse_transfer_timeout,
+        metavar="SECONDS",
+        help="Total transfer limit; 0 or omission allows unlimited duration.",
+    )
 
     # Delete command
     delete = subparsers.add_parser("delete", help="Delete a remote and its mapping")
@@ -543,6 +567,12 @@ def main():
     )
     transfer.add_argument(
         "--confirm", action="store_true", help="Confirm execution (otherwise dry-run)"
+    )
+    transfer.add_argument(
+        "--transfer-timeout",
+        type=_parse_transfer_timeout,
+        metavar="SECONDS",
+        help="Total transfer limit; 0 or omission allows unlimited duration.",
     )
 
     args = parser.parse_args()
@@ -674,6 +704,7 @@ def main():
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
                 search_pattern=getattr(args, "search_pattern", None),
+                transfer_timeout=getattr(args, "transfer_timeout", None),
             )
             if not ok:
                 sys.exit(1)
@@ -692,6 +723,7 @@ def main():
                 verbose=args.verbose,
                 select_path=getattr(args, "select", None),
                 search_pattern=getattr(args, "search_pattern", None),
+                transfer_timeout=getattr(args, "transfer_timeout", None),
             )
             if not ok:
                 sys.exit(1)
@@ -731,6 +763,7 @@ def main():
             operation=operation,
             dry_run=dry_run,
             verbose=args.verbose,
+            transfer_timeout=getattr(args, "transfer_timeout", None),
         ):
             sys.exit(1)
 

@@ -3,6 +3,20 @@
 All notable user-visible changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-08-19
+
+### Fixed
+
+- `push`, `pull`, and remote-to-remote `transfer` no longer terminate healthy
+  rclone processes after ten minutes. Transfers have no total time limit by
+  default, allowing large files to complete.
+
+### Added
+
+- `--transfer-timeout SECONDS` for `push`, `pull`, and `transfer`. Use a
+  positive value to set a total limit per rclone invocation; `0` and omission
+  leave the transfer unlimited.
+
 ## [1.0.0] - 2026-08-14
 
 ### Added

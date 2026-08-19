@@ -39,17 +39,17 @@ Notes:
 ## Installation
 
 `repokit-backup` is distributed as GitHub release wheels. Install the supported
-`repokit-common` release first; backup 1.0.0 supports Common versions from
+`repokit-common` release first; backup 1.0.1 supports Common versions from
 0.1.0 through 1.0.0.
 
-Install the 1.0.0 release:
+Install the 1.0.1 release:
 
 ```bash
 # 1) Install a compatible Common release (1.0.0 shown)
 python -m pip install https://github.com/CBS-HPC/repokit-common/releases/download/v1.0.0/repokit_common-1.0.0-py3-none-any.whl
 
 # 2) Install backup
-python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.0/repokit_backup-1.0.0-py3-none-any.whl
+python -m pip install https://github.com/CBS-HPC/repokit-backup/releases/download/v1.0.1/repokit_backup-1.0.1-py3-none-any.whl
 ```
 
 For a development checkout, use `python -m pip install -e .` only after
@@ -282,6 +282,18 @@ Transfer between two configured remotes:
 ```bash
 repokit-backup transfer --source myproject --destination archive --mode copy --confirm
 ```
+
+### Long Transfers
+
+`push`, `pull`, and `transfer` have no total wall-clock deadline by default, so
+large uploads and downloads can complete. Set `--transfer-timeout SECONDS` to
+enforce a deliberate limit per rclone invocation; `0` is also unlimited.
+
+```bash
+repokit-backup push --remote myproject --transfer-timeout 14400
+```
+
+This is separate from rclone's network inactivity timeout.
 
 List remote entries at mapped root or a subpath:
 

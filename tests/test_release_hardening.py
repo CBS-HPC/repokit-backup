@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import io
 import pathlib
@@ -9,6 +10,7 @@ import zipfile
 
 import pytest
 
+from repokit_backup import cli
 from repokit_backup import rclone
 from repokit_backup.registry import delete_from_registry, save_registry
 
@@ -119,6 +121,108 @@ def test_transfer_failure_returns_false(monkeypatch, tmp_path: pathlib.Path):
         dst="myproject:/backup",
         operation="copy",
     )
+
+
+def test_transfer_has_no_default_total_timeout(monkeypatch, tmp_path: pathlib.Path):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(rclone.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(rclone, "update_sync_status", lambda *_args, **_kwargs: None)
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(rclone.subprocess, "run", fake_run)
+
+    assert rclone._rclone_transfer(
+        remote_name="myproject",
+        src=str(tmp_path),
+        dst="myproject:/backup",
+        operation="copy",
+    )
+    assert captured["kwargs"] == {"check": True}
+
+
+def test_transfer_uses_explicit_total_timeout(monkeypatch, tmp_path: pathlib.Path):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(rclone.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(rclone, "update_sync_status", lambda *_args, **_kwargs: None)
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(rclone.subprocess, "run", fake_run)
+
+    assert rclone._rclone_transfer(
+        remote_name="myproject",
+        src=str(tmp_path),
+        dst="myproject:/backup",
+        operation="copy",
+        transfer_timeout=7200,
+    )
+    assert captured["kwargs"] == {"check": True, "timeout": 7200}
+
+
+def test_transfer_timeout_marks_transfer_failed(monkeypatch, tmp_path: pathlib.Path, capsys):
+    status: dict[str, object] = {}
+    monkeypatch.setattr(rclone.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(
+        rclone,
+        "update_sync_status",
+        lambda *_args, **kwargs: status.update(kwargs),
+    )
+    monkeypatch.setattr(
+        rclone.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(cmd="rclone", timeout=45)
+        ),
+    )
+
+    assert not rclone._rclone_transfer(
+        remote_name="myproject",
+        src=str(tmp_path),
+        dst="myproject:/backup",
+        operation="copy",
+        transfer_timeout=45,
+    )
+    assert "exceeded the configured total transfer timeout of 45 seconds" in capsys.readouterr().out
+    assert status["success"] is False
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0", None), ("7200", 7200.0), ("1.5", 1.5)],
+)
+def test_parse_transfer_timeout(value: str, expected: float | None):
+    assert cli._parse_transfer_timeout(value) == expected
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "not-a-number"])
+def test_parse_transfer_timeout_rejects_invalid_values(value: str):
+    with pytest.raises(argparse.ArgumentTypeError, match="seconds|number"):
+        cli._parse_transfer_timeout(value)
+
+
+def test_cli_passes_transfer_timeout_to_push(monkeypatch, tmp_path: pathlib.Path):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_resolve_cli_project_root", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "_bootstrap_project_runtime",
+        lambda _installer: (tmp_path / "bin", tmp_path / "pyproject.toml"),
+    )
+    monkeypatch.setattr(rclone, "push_rclone", lambda **kwargs: captured.update(kwargs) or True)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["repokit-backup", "push", "--remote", "myproject", "--transfer-timeout", "7200"],
+    )
+
+    cli.main()
+
+    assert captured["transfer_timeout"] == 7200.0
 
 
 def test_registry_delete_is_atomic_and_reports_success(tmp_path: pathlib.Path):

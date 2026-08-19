@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "repokit-backup"
-version = "1.0.0"
+version = "1.0.1"
 description = "Backup and sync CLI for Repokit"
 readme = "README.md"
 authors = [
